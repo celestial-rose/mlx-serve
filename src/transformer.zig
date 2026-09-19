@@ -2530,8 +2530,21 @@ var fused256_causal_env_cached: ?Fused256CausalMode = null;
 pub fn fused256Enabled() bool {
     if (fused256_override) |v| return v;
     if (fused256_env_cached) |v| return v;
+    var ver_buf: [64]u8 = undefined;
+    const ver = macosProductVersion(&ver_buf) orelse "";
+    // On macOS 15 (Sequoia) and older, Metal 3.2 JIT fails to compile
+    // msv_attn_p256 with an internal compiler error. Default to false unless
+    // explicitly forced via MLX_SERVE_FUSED_256=1.
+    const default_enabled = blk: {
+        var it = std.mem.splitScalar(u8, ver, '.');
+        if (it.next()) |maj_str| {
+            const maj = std.fmt.parseInt(u32, maj_str, 10) catch 0;
+            if (maj > 0 and maj < 26) break :blk false;
+        }
+        break :blk true;
+    };
     const raw = std.c.getenv("MLX_SERVE_FUSED_256");
-    const enabled = raw == null or !std.mem.eql(u8, std.mem.sliceTo(raw.?, 0), "0");
+    const enabled = if (raw) |r| !std.mem.eql(u8, std.mem.sliceTo(r, 0), "0") else default_enabled;
     fused256_env_cached = enabled;
     return enabled;
 }

@@ -7,6 +7,7 @@
 > 1. **Homebrew-less `libwebp` build & integration:** Added `scripts/build-webp.sh` which clones and builds Google's `libwebp` from official source via CMake into `lib/webp/`. `build.zig` and `app/build.sh` are updated to link and bundle this local stage without invoking `brew`.
 > 2. **macOS 15 Sequoia deployment floor:** Lowered minimum target versions across `build.zig` (`os_version_min = 15.0`), `scripts/build-mlx.sh` (`DEPLOYMENT_TARGET=15.0`), `app/Package.swift` (`.macOS("15.0")`), and `app/Info.plist` (`LSMinimumSystemVersion = 15.0`).
 > 3. **Graceful macOS 26 API fallbacks:** Wrapped macOS 26-only APIs (`scrollEdgeEffectStyle` in SwiftUI and FoundationModels `AppleFoundationChat`) in `#available(macOS 26.0, *)` guards so the app compiles cleanly with standard Xcode on Sequoia while keeping full functionality for all MLX and GGUF local models.
+> 4. **Metal 3.2 JIT stability fix for multi-turn chat:** Auto-disabled the custom `msv_attn_p256` Metal kernel on macOS < 26 (Sequoia) to avoid an internal compiler error in the Metal 3.2 JIT compiler during multi-turn attention prefill ($S \ge 16$, head dim 256), seamlessly falling back to MLX's stock composed SDPA path.
 >
 > **How to build:**
 > ```bash
