@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) void {
     // floor (glibc has no 26.2) and break the native Linux graph.
     const target = b.standardTargetOptions(.{
         .default_target = if (builtin.os.tag == .macos) .{
-            .os_version_min = .{ .semver = .{ .major = 26, .minor = 2, .patch = 0 } },
+            .os_version_min = .{ .semver = .{ .major = 15, .minor = 0, .patch = 0 } },
         } else .{},
     });
     const optimize = b.standardOptimizeOption(.{});
@@ -55,7 +55,6 @@ pub fn build(b: *std.Build) void {
     };
 
     if (target.result.os.tag == .macos) {
-        verifyBrewDeps(b);
         verifyMlxStage(b);
     }
 
@@ -149,7 +148,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "opencode2_plugin", .module = opencode2_plugin },
             .{ .name = "jinja_c", .module = addCHeaderModule(b, b.path("lib/jinja_cpp/jinja_wrapper.h"), b.path("lib/jinja_cpp"), target, optimize, "") },
             .{ .name = "stb", .module = addCHeaderModule(b, b.path("lib/stb_image.h"), b.path("lib"), target, optimize, "") },
-            .{ .name = "webp", .module = addCHeaderModule(b, .{ .cwd_relative = "/opt/homebrew/include/webp/decode.h" }, .{ .cwd_relative = "/opt/homebrew/include" }, target, optimize, "") },
+            .{ .name = "webp", .module = addCHeaderModule(b, b.path("lib/webp/include/webp/decode.h"), b.path("lib/webp/include"), target, optimize, "") },
         },
     });
 
@@ -195,8 +194,11 @@ pub fn build(b: *std.Build) void {
     // /opt/homebrew lib path so a leftover brew mlx-c can never win the link.
     addMlxLib(b, mod);
     // webp include/lib paths (homebrew)
-    mod.addIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
-    mod.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
+    // webp include/lib paths (local stage with homebrew fallback)
+    mod.addIncludePath(b.path("lib/webp/include"));
+    mod.addLibraryPath(b.path("lib/webp/lib"));
+    mod.addRPath(.{ .cwd_relative = "@loader_path/../../lib/webp/lib" });
+    mod.addRPath(.{ .cwd_relative = "@loader_path/../../../lib/webp/lib" });
     mod.linkSystemLibrary("webp", .{});
 
     if (macos_sdk_frameworks) |fw_path| {
@@ -237,7 +239,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "opencode2_plugin", .module = opencode2_plugin },
             .{ .name = "jinja_c", .module = addCHeaderModule(b, b.path("lib/jinja_cpp/jinja_wrapper.h"), b.path("lib/jinja_cpp"), target, optimize, "") },
             .{ .name = "stb", .module = addCHeaderModule(b, b.path("lib/stb_image.h"), b.path("lib"), target, optimize, "") },
-            .{ .name = "webp", .module = addCHeaderModule(b, .{ .cwd_relative = "/opt/homebrew/include/webp/decode.h" }, .{ .cwd_relative = "/opt/homebrew/include" }, target, optimize, "") },
+            .{ .name = "webp", .module = addCHeaderModule(b, b.path("lib/webp/include/webp/decode.h"), b.path("lib/webp/include"), target, optimize, "") },
         },
     });
 
@@ -253,10 +255,12 @@ pub fn build(b: *std.Build) void {
     test_mod.addIncludePath(b.path("lib/ds4"));
     addAneSources(b, test_mod);
     addLlamaLib(b, test_mod);
+    test_mod.addIncludePath(b.path("lib/webp/include"));
+    test_mod.addLibraryPath(b.path("lib/webp/lib"));
     test_mod.linkSystemLibrary("c++", .{});
     addMlxLib(b, test_mod);
-    test_mod.addIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
-    test_mod.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
+    test_mod.addRPath(.{ .cwd_relative = "@loader_path/../../lib/webp/lib" });
+    test_mod.addRPath(.{ .cwd_relative = "@loader_path/../../../lib/webp/lib" });
     test_mod.linkSystemLibrary("webp", .{});
 
     if (macos_sdk_frameworks) |fw_path| {

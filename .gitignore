@@ -91,3 +91,4 @@ containers/agent-shell-mlxserve/rootfs.tar.gz.sha256
 /missionlog.md
 /.mc.json
 tests/soak_log.csv
+lib/webp/

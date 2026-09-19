@@ -28,7 +28,7 @@
 	<key>CFBundleVersion</key>
 	<string>26.9.6-dev</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>26.2</string>
+	<string>15.0</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>

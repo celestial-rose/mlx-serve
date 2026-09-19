@@ -47,20 +47,23 @@ enum AppleFoundationChat {
     private static let heldAvailability = HeldValue(hold: 5, read: readAvailability)
 
     private static func readAvailability() -> Availability {
-        switch SystemLanguageModel.default.availability {
-        case .available: return .available
-        case .unavailable(let reason):
-            switch reason {
-            case .appleIntelligenceNotEnabled:
-                return .unavailable("Apple Intelligence is off — turn it on in System Settings")
-            case .modelNotReady:
-                return .unavailable("Apple Intelligence is still downloading its model")
-            case .deviceNotEligible:
-                return .unavailable("This Mac does not support Apple Intelligence")
-            @unknown default:
-                return .unavailable("Apple Intelligence is unavailable")
+        if #available(macOS 26.0, *) {
+            switch SystemLanguageModel.default.availability {
+            case .available: return .available
+            case .unavailable(let reason):
+                switch reason {
+                case .appleIntelligenceNotEnabled:
+                    return .unavailable("Apple Intelligence is off — turn it on in System Settings")
+                case .modelNotReady:
+                    return .unavailable("Apple Intelligence is still downloading its model")
+                case .deviceNotEligible:
+                    return .unavailable("This Mac does not support Apple Intelligence")
+                @unknown default:
+                    return .unavailable("Apple Intelligence is unavailable")
+                }
             }
         }
+        return .unavailable("Apple Intelligence requires macOS 26 or newer")
     }
 
     /// A tool the model asked for. The framework runs tools itself; we take
@@ -82,6 +85,7 @@ enum AppleFoundationChat {
         }
     }
 
+    @available(macOS 26.0, *)
     private struct BridgedTool: Tool {
         typealias Arguments = GeneratedContent
         typealias Output = String
@@ -102,6 +106,7 @@ enum AppleFoundationChat {
 
     /// The engine's tool executor takes flat string arguments; anything that
     /// is not a scalar rides as its JSON text.
+    @available(macOS 26.0, *)
     private static func stringArgs(_ content: GeneratedContent) -> [String: String] {
         guard case .structure(let props, let order) = content.kind else { return [:] }
         var out: [String: String] = [:]
@@ -131,12 +136,10 @@ enum AppleFoundationChat {
                     }
                     let plan = AppleFoundationBridge.plan(messages: messages)
                     let recorder = Recorder()
+                    guard #available(macOS 26.0, *) else {
+                        throw AppleFoundationError.unavailable("Apple Intelligence requires macOS 26 or newer")
+                    }
                     let tools = buildTools(toolsJSON, recorder: recorder)
-                    // BOTH halves, always: the transcript carries the tool
-                    // DEFINITIONS (what the model may call) and the session
-                    // carries the IMPLEMENTATIONS (what dispatch finds).
-                    // Definitions alone and the model answers "I can't do
-                    // that" without ever calling anything — measured.
                     let session = LanguageModelSession(
                         tools: tools,
                         transcript: transcript(plan.entries, tools: tools))
@@ -171,6 +174,7 @@ enum AppleFoundationChat {
         }
     }
 
+    @available(macOS 26.0, *)
     private static func buildTools(_ json: String?, recorder: Recorder) -> [BridgedTool] {
         guard let json, !json.isEmpty else { return [] }
         return AppleFoundationBridge.tools(fromJSON: json).compactMap { def in
@@ -186,12 +190,14 @@ enum AppleFoundationChat {
         }
     }
 
+    @available(macOS 26.0, *)
     private static func property(_ p: AppleToolProperty) -> DynamicGenerationSchema.Property {
         DynamicGenerationSchema.Property(name: p.name, description: p.description,
                                         schema: schema(p.node, name: p.name),
                                         isOptional: p.isOptional)
     }
 
+    @available(macOS 26.0, *)
     private static func schema(_ node: AppleSchemaNode, name: String) -> DynamicGenerationSchema {
         switch node {
         case .string(let choices):
@@ -208,6 +214,7 @@ enum AppleFoundationChat {
         }
     }
 
+    @available(macOS 26.0, *)
     private static func transcript(_ entries: [AppleChatEntry],
                                    tools: [BridgedTool]) -> Transcript {
         let definitions = tools.map { Transcript.ToolDefinition(tool: $0) }
@@ -247,10 +254,12 @@ extension AppleFoundationChat {
     /// The window is 4k and cannot be raised, so the overflow has to say what
     /// the user can actually do about it.
     static func mapped(_ error: Error) -> Error {
-        guard case LanguageModelSession.GenerationError.exceededContextWindowSize = error else {
-            return error
+        if #available(macOS 26.0, *) {
+            if case LanguageModelSession.GenerationError.exceededContextWindowSize = error {
+                return AppleFoundationError.contextFull
+            }
         }
-        return AppleFoundationError.contextFull
+        return error
     }
 }
 

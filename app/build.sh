@@ -191,6 +191,8 @@ cd "$PROJECT_ROOT"
 # Stage libllama (llama.cpp GGUF engine) before the Zig build links against it.
 echo "→ Fetching libllama..."
 bash "$PROJECT_ROOT/scripts/fetch-llama.sh"
+# Build libwebp if not using Homebrew
+bash "$PROJECT_ROOT/scripts/build-webp.sh"
 # Build the pinned mlx + mlx-c submodules into lib/mlx (NAX kernels enabled —
 # the brew bottle ships without them). Idempotent: no-op when the stage
 # matches the pinned SHAs. Needs full Xcode (Metal Toolchain), so it runs
@@ -383,7 +385,11 @@ if [ "$STAGE_FRAMEWORKS" = "1" ]; then
     cp "$MLX_STAGE_LIB/mlx.metallib" "$CONTENTS/Frameworks/"
 
     # libwebp + libsharpyuv for WebP image decoding in vision pipeline
-    WEBP_LIB="$(brew --prefix webp 2>/dev/null || echo "/opt/homebrew/opt/webp")/lib"
+    if [ -d "$PROJECT_ROOT/lib/webp/lib" ]; then
+        WEBP_LIB="$PROJECT_ROOT/lib/webp/lib"
+    else
+        WEBP_LIB="$(brew --prefix webp 2>/dev/null || echo "/opt/homebrew/opt/webp")/lib"
+    fi
     for wlib in libwebp.dylib libsharpyuv.dylib; do
         [ -f "$WEBP_LIB/$wlib" ] && cp "$WEBP_LIB/$wlib" "$CONTENTS/Frameworks/"
     done

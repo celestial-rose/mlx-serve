@@ -1125,7 +1125,7 @@ struct ChatSidebar: View {
         // so content scrolls beneath it), and a soft edge is how macOS frosts
         // that overlap. Not a hand-drawn band — a custom strip pulled into this
         // area once looked native and swallowed every click in it.
-        .scrollEdgeEffectStyle(.soft, for: [.top, .bottom])
+        .modifier(ScrollEdgeEffectModifier(axes: [.top, .bottom]))
         // No blanket `.onChange(of: activeChatId) { showConversation() }`:
         // every deliberate route into a conversation (the row button above,
         // New Chat, the quick launcher) calls showConversation() itself, and
@@ -2557,7 +2557,7 @@ struct ChatDetailView: View {
                 // the other half, frosting the content as it passes UNDER them,
                 // drawn by the scroll view itself so nothing new can intercept
                 // a click.
-                .scrollEdgeEffectStyle(.soft, for: .top)
+                .modifier(ScrollEdgeEffectModifier(axes: [.top]))
                 // A chat opens at its newest line by LAYOUT, with the real
                 // heights in hand, not by a jump aimed at an estimate of them.
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -6869,5 +6869,16 @@ fileprivate final class ComposerTextView: NSTextView {
         let ok = super.resignFirstResponder()
         if ok { onResignFocus?() }
         return ok
+    }
+}
+
+private struct ScrollEdgeEffectModifier: ViewModifier {
+    let axes: Edge.Set
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.scrollEdgeEffectStyle(.soft, for: axes)
+        } else {
+            content
+        }
     }
 }

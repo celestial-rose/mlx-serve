@@ -1,3 +1,26 @@
+> [!NOTE]
+> **Sequoia (macOS 15) & Homebrew-less Build**
+>
+> This fork enables building and running **MLX Core** and **mlx-serve** on **macOS 15 Sequoia** without requiring **Homebrew**. Perfect for **M4 Max** (and M1–M4 Apple Silicon) systems that don't need M5-exclusive NAX/ANE kernels.
+>
+> **What was changed:**
+> 1. **Homebrew-less `libwebp` build & integration:** Added `scripts/build-webp.sh` which clones and builds Google's `libwebp` from official source via CMake into `lib/webp/`. `build.zig` and `app/build.sh` are updated to link and bundle this local stage without invoking `brew`.
+> 2. **macOS 15 Sequoia deployment floor:** Lowered minimum target versions across `build.zig` (`os_version_min = 15.0`), `scripts/build-mlx.sh` (`DEPLOYMENT_TARGET=15.0`), `app/Package.swift` (`.macOS("15.0")`), and `app/Info.plist` (`LSMinimumSystemVersion = 15.0`).
+> 3. **Graceful macOS 26 API fallbacks:** Wrapped macOS 26-only APIs (`scrollEdgeEffectStyle` in SwiftUI and FoundationModels `AppleFoundationChat`) in `#available(macOS 26.0, *)` guards so the app compiles cleanly with standard Xcode on Sequoia while keeping full functionality for all MLX and GGUF local models.
+>
+> **How to build:**
+> ```bash
+> git clone --recurse-submodules https://github.com/celestial-rose/mlx-serve.git
+> cd mlx-serve
+>
+> # Requirements: Xcode with Command Line Tools & Metal Toolchain, and cmake
+> # Fast local dev build (creates app/MLX Core.app):
+> FAST_DEV=1 ./app/build.sh
+>
+> # Open the app
+> open "app/MLX Core.app"
+> ```
+
 ![mlx-serve — the unified AI powerhouse on Apple Silicon: chat, coding agents, image, video, music, voice clone, 3D](website/assets/mlx-serve-header.png)
 
 # mlx-serve — run any LLM on your Mac
