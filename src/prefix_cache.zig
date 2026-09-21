@@ -543,6 +543,37 @@ pub const HotPrefixCache = struct {
         });
     }
 
+    /// Common turn end delimiter token IDs across popular architectures:
+    /// - 151645: <|im_end|> (Qwen family, chatml)
+    /// - 151643: <|endoftext|> (Qwen base/general)
+    /// - 128001 / 128009: <|end_of_text|> / <|eot_id|> (Llama 3)
+    /// - 107: <turn|> / <end_of_turn> (Gemma)
+    /// - 2: </s> (Mistral / Llama 2)
+    fn isTurnBoundaryToken(tok: u32) bool {
+        return switch (tok) {
+            151645, 151643, 128001, 128009, 107, 2 => true,
+            else => false,
+        };
+    }
+
+    /// Snap backwards to the last known message turn boundary (immediately following the end token).
+    /// Returns the snapped length, or matched if no boundary is found within the search window.
+    fn findLastTurnBoundary(tokens: []const u32, matched: usize) usize {
+        if (matched == 0 or tokens.len == 0) return 0;
+        const search_limit = @min(matched, tokens.len);
+        var i = search_limit;
+        while (i > 0) {
+            i -= 1;
+            if (isTurnBoundaryToken(tokens[i])) {
+                // Position right after the turn delimiter
+                return i + 1;
+            }
+            // Don't scan back indefinitely if turn is extremely long (keep within 8192 tokens)
+            if (search_limit - i > 8192) break;
+        }
+        return matched;
+    }
+
     /// The largest checkpoint whose `pos ≤ limit` (checkpoints are sorted
     /// ascending). Shared by the RAM restore and the RAM-vs-disk fairness
     /// comparison — both need the effective restorable length of a hybrid
@@ -1347,6 +1378,14 @@ pub const HotPrefixCache = struct {
             return .{ .matched = 0, .full_match = false };
         }
 
+        // Snap effective_matched backwards on partial matches to avoid truncating mid-message
+        if (effective_matched < prompt_ids.len) {
+            const snapped = findLastTurnBoundary(prompt_ids[0..effective_matched], effective_matched);
+            if (snapped > 0 and snapped < effective_matched) {
+                log.debug("  [hot-cache] snapped partial restore from {d} to turn boundary {d}\n", .{ effective_matched, snapped });
+                effective_matched = snapped;
+            }
+        }
         const full_match = effective_matched == prompt_ids.len;
         const final_len: usize = if (full_match and effective_matched > 1) effective_matched - 1 else effective_matched;
 
