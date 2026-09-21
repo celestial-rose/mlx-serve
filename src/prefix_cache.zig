@@ -1376,8 +1376,11 @@ pub const HotPrefixCache = struct {
         var res: LookupResult = .{
             .matched = matched,
             .full_match = full_match,
-            .dflash_base = restoreDflash(e, dflash_target, matched, s),
-            .mtp_base = restoreMtp(e, mtp_target, matched, s),
+            // Speculative MTP/DFlash draft states belong strictly to the branch that drafted them.
+            // On a diverged partial prefix hit (!full_match), start spec heads clean
+            // to prevent cross-branch draft state bleed from corrupting attention.
+            .dflash_base = if (full_match) restoreDflash(e, dflash_target, matched, s) else null,
+            .mtp_base = if (full_match) restoreMtp(e, mtp_target, matched, s) else null,
         };
         if (!full_reuse) {
             res.checked_out = self.checkoutIfEligible(m.idx, m.shared, prompt_ids.len, slot_id);
