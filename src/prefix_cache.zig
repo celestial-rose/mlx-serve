@@ -543,15 +543,15 @@ pub const HotPrefixCache = struct {
         });
     }
 
-    /// Common turn end delimiter token IDs across popular architectures:
-    /// - 151645: <|im_end|> (Qwen family, chatml)
-    /// - 151643: <|endoftext|> (Qwen base/general)
-    /// - 128001 / 128009: <|end_of_text|> / <|eot_id|> (Llama 3)
-    /// - 107: <turn|> / <end_of_turn> (Gemma)
-    /// - 2: </s> (Mistral / Llama 2)
+    /// End-of-turn delimiter token IDs for major chat templates.
+    /// Uses standard chat-terminator special tokens:
+    /// - 151645: <|im_end|> (Qwen / ChatML)
+    /// - 151643: <|endoftext|> (Qwen base / eos)
+    /// - 128009: <|eot_id|> (Llama 3 Instruct)
+    /// - 128001: <|end_of_text|> (Llama 3 base)
     fn isTurnBoundaryToken(tok: u32) bool {
         return switch (tok) {
-            151645, 151643, 128001, 128009, 107, 2 => true,
+            151645, 151643, 128009, 128001 => true,
             else => false,
         };
     }
@@ -1412,14 +1412,16 @@ pub const HotPrefixCache = struct {
         } else {
             log.info("  [hot-cache] reused {d}/{d} tokens (matched {d}; entry {d}/{d})\n", .{ effective_matched, prompt_ids.len, m.shared, m.idx + 1, self.entries.items.len });
         }
+        // Speculative MTP/DFlash draft states belong strictly to the branch that drafted them.
+        // A clean continuation matches all the way to the tip of the cached entry (m.shared >= e.tokens.len).
+        // Only on a diverged sibling branch (m.shared < e.tokens.len) do we start spec heads clean (null)
+        // to prevent cross-branch draft state bleed from corrupting attention.
+        const is_continuation = (m.shared >= e.tokens.len);
         var res: LookupResult = .{
             .matched = matched,
             .full_match = full_match,
-            // Speculative MTP/DFlash draft states belong strictly to the branch that drafted them.
-            // On a diverged partial prefix hit (!full_match), start spec heads clean
-            // to prevent cross-branch draft state bleed from corrupting attention.
-            .dflash_base = if (full_match) restoreDflash(e, dflash_target, matched, s) else null,
-            .mtp_base = if (full_match) restoreMtp(e, mtp_target, matched, s) else null,
+            .dflash_base = if (is_continuation) restoreDflash(e, dflash_target, matched, s) else null,
+            .mtp_base = if (is_continuation) restoreMtp(e, mtp_target, matched, s) else null,
         };
         if (!full_reuse) {
             res.checked_out = self.checkoutIfEligible(m.idx, m.shared, prompt_ids.len, slot_id);
