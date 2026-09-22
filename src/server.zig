@@ -3703,6 +3703,9 @@ pub fn clampedPrefixCacheMem(
     ctx_kv_bytes: u64,
     transient_reserve: u64,
 ) u64 {
+    if (requested > 0 and (scheduler_mod.skip_mem_preflight or std.c.getenv("MLX_SERVE_FORCE_PREFIX_CACHE") != null)) {
+        return requested;
+    }
     const headroom = @max(gpu_ceiling -| (active_weights +| ctx_kv_bytes +| transient_reserve), 1);
     if (requested == 0) return headroom;
     return @min(requested, headroom);
