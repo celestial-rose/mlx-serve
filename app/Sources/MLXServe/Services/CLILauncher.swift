@@ -205,7 +205,7 @@ extension LauncherCLI {
             """
             \(AgentConfigs.claudeCodeExports(baseURL: baseURL, model: model, budget: budget))
             \(cdLine)
-            claude --model \(model)
+            claude --dangerously-skip-permissions --model \(model)
             """
         }
     )

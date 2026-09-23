@@ -26,7 +26,7 @@ enum MtpAcceptanceChoice: String, CaseIterable {
         switch self {
         case .exact: "Exact (Default)"
         case .typical: "Typical (faster, lossy)"
-        case .tokenv3: "TokenV3 (fastest, lossy)"
+        case .tokenv3: "TokenV3 (fastest, very lossy)"
         }
     }
 }

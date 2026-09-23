@@ -725,6 +725,7 @@
 "Locked to" = "锁定为";
 "Log level" = "日志级别";
 "Log to file" = "写入日志文件";
+"Lossy acceptance can loop on repetitive output: in our tests Typical looped 10% of runs, TokenV3 40%." = "有损接受模式在重复性输出上可能陷入循环：我们的测试中 Typical 循环率为 10%，TokenV3 为 40%。";
 "Love song" = "情歌";
 "Low" = "低";
 "Low = stay close to the source; high = mostly the prompt." = "数值低则贴近原图；数值高则主要取决于提示词。";
@@ -1387,7 +1388,7 @@
 "Tight fit" = "刚好塞得下";
 "Time of day" = "时段";
 "Toggle a server on, fill in any required fields, then click Save. Servers spawn lazily the next time you send a message with MCP mode on." = "打开服务器开关，填好所有必填字段，然后点按保存。服务器会在你下次开启 MCP 模式发送消息时按需启动。";
-"TokenV3 (fastest, lossy)" = "TokenV3（最快，有损）";
+"TokenV3 (fastest, very lossy)" = "TokenV3（最快，严重有损）";
 "Tokenize cache entries" = "分词缓存条目";
 "Tokens generated" = "生成的 Token";
 "Tokens guessed ahead" = "预先猜测的 Token 数";

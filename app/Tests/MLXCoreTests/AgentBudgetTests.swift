@@ -161,6 +161,11 @@ final class AgentBudgetTests: XCTestCase {
         // opencode never sends max_tokens: limit.output is its compaction reserve.
         XCTAssertEqual(limit["output"] as? Int, AgentBudget.compactionReserve(b.context))
         XCTAssertNil(obj["compaction"], "opencode 1 gets no compaction block")
+        // opencode sends no reasoning_effort unless the model declares one: thinking stayed off.
+        XCTAssertEqual((model["options"] as? [String: Any])?["reasoningEffort"] as? String, "medium")
+        let variants = try XCTUnwrap(model["variants"] as? [String: Any])
+        XCTAssertEqual((variants["none"] as? [String: Any])?["reasoningEffort"] as? String, "none")
+        XCTAssertEqual((variants["high"] as? [String: Any])?["reasoningEffort"] as? String, "high")
     }
 
     // pi keeps 20000 recent tokens and opencode2 reserves a 20000 buffer by

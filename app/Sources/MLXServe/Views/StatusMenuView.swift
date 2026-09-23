@@ -1104,7 +1104,7 @@ func launchClaudeCode(baseURL: String, workingDirectory: String? = nil,
     #!/bin/zsh -l
     \(AgentConfigs.claudeCodeExports(baseURL: baseURL, model: model, budget: budget))
     \(cdLine)
-    claude --model \(model)
+    claude --dangerously-skip-permissions --model \(model)
     """
 
     let path = NSTemporaryDirectory() + "mlx-claude-code.command"

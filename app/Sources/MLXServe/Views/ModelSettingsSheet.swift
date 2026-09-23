@@ -135,6 +135,11 @@ struct ModelSettingsSheet: View {
             // A grouped Form is a scroll view with no ideal height: hosted in a
             // Window it collapsed to nothing.
             .frame(height: formHeight)
+            if rows.acceptance {
+                Text(L10n.text("Lossy acceptance can loop on repetitive output: in our tests Typical looped 10% of runs, TokenV3 40%."))
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .padding(.horizontal, 16).padding(.bottom, 4)
+            }
             Text(L10n.text(footnote))
                 .font(.caption2).foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
