@@ -326,16 +326,18 @@ test "shouldRotate: caps growth, never loops on an oversized first line" {
 // lives in ONE test — the build runner executes tests in parallel and two
 // tests calling `openFile` would fight over `sink_fd`.
 test "file sink: writes lines, honors level, survives reopen, rotates at the cap" {
-    const dir = "/tmp/mlx-serve-logtest";
-    const path = dir ++ "/s.log";
-    _ = std.c.mkdir(dir, @as(std.c.mode_t, 0o755));
-    _ = std.c.unlink(path);
-    _ = std.c.unlink(path ++ ".1");
-    defer {
-        closeFile();
-        _ = std.c.unlink(path);
-        _ = std.c.unlink(path ++ ".1");
-    }
+    // A private dir per run: a fixed /tmp path collided when two test binaries ran at once.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    defer closeFile();
+    var root_buf: [512]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(std.Io.Threaded.global_single_threaded.io(), &root_buf)];
+    var path_buf: [600]u8 = undefined;
+    var rot_buf: [600]u8 = undefined;
+    var deep_buf: [600]u8 = undefined;
+    const path = try std.fmt.bufPrintSentinel(&path_buf, "{s}/s.log", .{root}, 0);
+    const rotated = try std.fmt.bufPrintSentinel(&rot_buf, "{s}/s.log.1", .{root}, 0);
+    const deep = try std.fmt.bufPrintSentinel(&deep_buf, "{s}/a/b/c/deep.log", .{root}, 0);
 
     const original = current_level;
     defer setLevel(original);
@@ -379,18 +381,10 @@ test "file sink: writes lines, honors level, survives reopen, rotates at the cap
     try testing.expect(live > 0);
     try testing.expect(live <= 64 + 32); // bounded: the last line may overshoot
     var buf2: [4096]u8 = undefined;
-    try testing.expect(readFileForTest(path ++ ".1", &buf2) > 0); // rotated backup exists
+    try testing.expect(readFileForTest(rotated, &buf2) > 0); // rotated backup exists
 
     // Nested parents are created: the real default path is
     // ~/.mlx-serve/logs/… and BOTH components can be missing on a fresh HOME.
-    const deep = "/tmp/mlx-serve-logtest/a/b/c/deep.log";
-    defer {
-        closeFile();
-        _ = std.c.unlink(deep);
-        _ = std.c.rmdir("/tmp/mlx-serve-logtest/a/b/c");
-        _ = std.c.rmdir("/tmp/mlx-serve-logtest/a/b");
-        _ = std.c.rmdir("/tmp/mlx-serve-logtest/a");
-    }
     try openFile(deep, 0);
     info("deep\n", .{});
     closeFile();
