@@ -2,7 +2,7 @@
 
 Short on purpose. Read it once, remember it.
 
-**Setup:** Apple Silicon Mac. `./scripts/fetch-zig.sh` (Zig 0.17 nightly into `.zig-toolchain/`), `scripts/build-mlx.sh` (pinned mlx submodules). Server only: `zig build -Doptimize=ReleaseFast`. Full app: `bash app/build.sh` (builds both binaries into `app/MLX Core.app`), then `open "app/MLX Core.app"`. 
+**Setup:** Apple Silicon Mac. `./scripts/fetch-zig.sh` (Zig 0.17 nightly into `.zig-toolchain/`), `scripts/build-mlx.sh` (pinned mlx submodules). Server only: `zig build -Doptimize=ReleaseFast`. Full app: `bash app/build.sh` (builds both binaries into `app/MLX-Serve.app`), then `open "app/MLX-Serve.app"`. 
 
 ## Before you open anything
 

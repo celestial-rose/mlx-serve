@@ -192,10 +192,10 @@ final class ServerLogBufferTests: XCTestCase {
 
     func testLaunchCommandLineJoinsBinaryAndArgs() {
         let cmd = ServerManager.launchCommandLine(
-            binaryPath: "/Applications/MLX Core.app/Contents/MacOS/mlx-serve",
+            binaryPath: "/Volumes/My Apps/MLX-Serve.app/Contents/MacOS/mlx-serve",
             args: ["--model", "/Volumes/Models/Qwen", "--serve", "--port", "11234"])
         // Binary path has a space → quoted; the whole invocation is present.
-        XCTAssertTrue(cmd.contains("\"/Applications/MLX Core.app/Contents/MacOS/mlx-serve\""))
+        XCTAssertTrue(cmd.contains("\"/Volumes/My Apps/MLX-Serve.app/Contents/MacOS/mlx-serve\""))
         XCTAssertTrue(cmd.contains("--model"))
         XCTAssertTrue(cmd.contains("--port 11234"))
     }

@@ -1,5 +1,10 @@
 # Changelog
 
+## v26.9.6-dev
+
+### Changes
+- The app is now MLX-Serve.app and the download is MLX-Serve.dmg. Settings carry over; an app updated in place from 26.9.5 keeps its old folder name until the next update renames it.
+
 ## v26.9.5 — Bonsai - Qwen-Image 2.1 - Concurrency & Speed
 
 ### Highlights

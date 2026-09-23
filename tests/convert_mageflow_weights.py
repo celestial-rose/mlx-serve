@@ -266,7 +266,7 @@ and multi-reference composition: no visible quality difference.
 
 ## Run it
 
-Download **[MLX Core.app](https://github.com/ddalcu/mlx-serve/releases/latest)**,
+Download **[MLX-Serve.app](https://github.com/ddalcu/mlx-serve/releases/latest)**,
 open the Image tab, and pick **{preset}** from the model menu.
 It downloads with a progress bar and generates in the same window. No terminal,
 nothing to configure.
@@ -292,7 +292,7 @@ A native Zig server for Apple Silicon. No Python, no cloud, no Electron. One
   Open WebUI just work.
 - **Any LLM, not just these.** Every MLX model and every GGUF on Hugging Face,
   with speculative decoding built in.
-- **MLX Core.app included.** Signed macOS menu-bar app: chat, agent mode with
+- **MLX-Serve.app included.** Signed macOS menu-bar app: chat, agent mode with
   MCP tools, model downloads, and every generator above, no terminal needed.
 
 [mlxserve.com](https://mlxserve.com/) · [GitHub](https://github.com/ddalcu/mlx-serve)

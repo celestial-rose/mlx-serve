@@ -332,7 +332,7 @@ jobs:
         env:
           SIGNING_IDENTITY: "Developer ID Application: David Dalcu (${{ secrets.APPLE_TEAM_ID }})"
         run: |
-          APP="MLX Core.app"
+          APP="MLX-Serve.app"
           CONTENTS="$APP/Contents"
           mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Frameworks" "$CONTENTS/Resources"
 
@@ -517,11 +517,11 @@ jobs:
             --wait
 
           # Staple the app bundle
-          xcrun stapler staple "MLX Core.app"
+          xcrun stapler staple "MLX-Serve.app"
           rm -f "MLXCore-app.zip"
 
       - name: Create DMG installer
-        run: bash scripts/create-dmg.sh "MLX Core.app" MLXCore.dmg
+        run: bash scripts/create-dmg.sh "MLX-Serve.app" MLX-Serve.dmg
 
       # ── Package final artifacts ──
       - name: Package CLI tarball
@@ -563,7 +563,7 @@ jobs:
           draft: true
           files: |
             mlx-serve-bin-macos-arm64.tar.gz
-            MLXCore.dmg
+            MLX-Serve.dmg
 
       - name: Upload PR / dry-run artifacts
         if: ${{ inputs.dry_run || github.event_name == 'pull_request' }}
@@ -574,5 +574,5 @@ jobs:
           name: package-${{ steps.version.outputs.version }}
           path: |
             mlx-serve-bin-macos-arm64.tar.gz
-            MLXCore.dmg
+            MLX-Serve.dmg
           retention-days: 7

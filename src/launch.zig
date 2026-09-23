@@ -561,8 +561,6 @@ fn serverUp(allocator: std.mem.Allocator, io: std.Io, base_url: []const u8) bool
     return true;
 }
 
-/// `open -g -a "MLX Core"` — nonzero exit = the app isn't installed, which is
-/// the detection: no probing of /Applications by hand.
 /// HTTP status of `GET <base_url>/metrics.json`, or null when curl could not
 /// reach the server at all.
 fn metricsStatus(allocator: std.mem.Allocator, io: std.Io, base_url: []const u8) ?u16 {
@@ -577,9 +575,11 @@ fn metricsStatus(allocator: std.mem.Allocator, io: std.Io, base_url: []const u8)
     return std.fmt.parseInt(u16, std.mem.trim(u8, result.stdout, " \r\n"), 10) catch null;
 }
 
+/// `open -g -b <bundle id>` finds the app under any bundle name; nonzero exit =
+/// the app isn't installed, which is the detection.
 fn tryStartApp(allocator: std.mem.Allocator, io: std.Io) bool {
     const result = std.process.run(allocator, io, .{
-        .argv = &.{ "open", "-g", "-a", "MLX Core" },
+        .argv = &.{ "open", "-g", "-b", "com.dalcu.mlx-core" },
     }) catch return false;
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);

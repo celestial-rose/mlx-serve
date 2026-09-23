@@ -19,7 +19,7 @@
 git clone --recurse-submodules https://github.com/ddalcu/mlx-serve && cd mlx-serve
 brew bundle install --file=Brewfile
 ./app/build.sh
-open "app/MLX Core.app"
+open "app/MLX-Serve.app"
 ```
 
 `app/build.sh` 会把固定子模块拉回各自的 commit，落位 llama.cpp 与 Zig nightly，在断言 NAX kernel 的前提下构建 mlx + mlx-c，编译 Swift 应用与 Zig 服务器，然后打包并签名。环境里没有签名身份时，它做 ad-hoc 签名并跳过公证，因此不需要 Apple 开发者账号。版本由 `.github/workflows/release.yml` 发布。

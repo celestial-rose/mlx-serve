@@ -13,7 +13,7 @@ final class LaTeXFontsTests: XCTestCase {
     }
 
     func testFontsAreFoundInAnAppBundlesResourcesDirectory() {
-        let resources = URL(fileURLWithPath: "/Applications/MLX Core.app/Contents/Resources")
+        let resources = URL(fileURLWithPath: "/Applications/MLX-Serve.app/Contents/Resources")
         let bundle = resources.appendingPathComponent(LaTeXFonts.bundleName)
         let located = LaTeXFonts.locate(
             searching: [resources],
@@ -38,7 +38,7 @@ final class LaTeXFontsTests: XCTestCase {
     }
 
     func testAFontBundleWithoutItsFontsIsNotAHit() {
-        let resources = URL(fileURLWithPath: "/Applications/MLX Core.app/Contents/Resources")
+        let resources = URL(fileURLWithPath: "/Applications/MLX-Serve.app/Contents/Resources")
         XCTAssertNil(
             LaTeXFonts.locate(searching: [resources], fileExists: present([]))
         )

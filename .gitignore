@@ -35,6 +35,7 @@ zig-out/
 .build/
 app/.swiftpm/
 app/MLX Core.app/
+app/MLX-Serve.app/
 app/MLX Serve.app/
 app/*.zip
 
@@ -50,7 +51,7 @@ scripts/__pycache__/
 mlx-logo.png
 transformer.o
 test_zig
-app/MLXCore.dmg
+app/MLX-Serve.dmg
 server_err.log
 .vscode
 

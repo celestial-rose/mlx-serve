@@ -167,7 +167,7 @@ About **17x realtime** on an M-series Mac, ~350 MB resident.
 
 ## Run it
 
-Download **[MLX Core.app](https://github.com/ddalcu/mlx-serve/releases/latest)**,
+Download **[MLX-Serve.app](https://github.com/ddalcu/mlx-serve/releases/latest)**,
 open Settings ▸ Voice, and pick **Kokoro** as the voice engine. 54 voices, and
 naming several separated by commas blends them into a new one.
 

@@ -33,18 +33,20 @@ jobs:
         run: |
           gh release download "${{ github.event.release.tag_name }}" \
             --repo "${{ github.repository }}" \
-            --pattern MLXCore.dmg \
+            --pattern MLX-Serve.dmg \
             --pattern mlx-serve-bin-macos-arm64.tar.gz
 
       - name: Update Homebrew formulas
         run: |
           TAG="${{ github.event.release.tag_name }}"
           VERSION="${TAG#v}"
-          DMG_SHA=$(shasum -a 256 MLXCore.dmg | awk '{print $1}')
+          DMG_SHA=$(shasum -a 256 MLX-Serve.dmg | awk '{print $1}')
           CLI_SHA=$(shasum -a 256 mlx-serve-bin-macos-arm64.tar.gz | awk '{print $1}')
 
           sed -i "s/version \".*\"/version \"$VERSION\"/" Casks/mlx-core.rb
           sed -i "s/sha256 \".*\"/sha256 \"$DMG_SHA\"/" Casks/mlx-core.rb
+          sed -i 's#/MLXCore\.dmg"#/MLX-Serve.dmg"#' Casks/mlx-core.rb
+          sed -i 's/app "MLX Core\.app"/app "MLX-Serve.app"/; s/name "MLX Core"/name "MLX-Serve"/' Casks/mlx-core.rb
 
           sed -i "s/version \".*\"/version \"$VERSION\"/" Formula/mlx-serve.rb
           sed -i "s/sha256 \".*\"/sha256 \"$CLI_SHA\"/" Formula/mlx-serve.rb

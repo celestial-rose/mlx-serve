@@ -104,9 +104,9 @@ final class CLIInstallerTests: XCTestCase {
 
     func testAdminCommandSingleQuotesPathWithSpaces() {
         let cmd = CLIInstaller.adminInstallShellCommand(
-            binarySource: "/Applications/MLX Core.app/Contents/MacOS/mlx-serve")
+            binarySource: "/Applications/MLX-Serve.app/Contents/MacOS/mlx-serve")
         XCTAssertTrue(cmd.contains("mkdir -p /usr/local/bin"))
-        XCTAssertTrue(cmd.contains("ln -sf '/Applications/MLX Core.app/Contents/MacOS/mlx-serve' /usr/local/bin/mlx-serve"))
+        XCTAssertTrue(cmd.contains("ln -sf '/Applications/MLX-Serve.app/Contents/MacOS/mlx-serve' /usr/local/bin/mlx-serve"))
     }
 
     func testShellQuoteEscapesEmbeddedSingleQuote() {

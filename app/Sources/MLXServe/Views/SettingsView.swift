@@ -3106,7 +3106,7 @@ private struct UpdatesSectionContent: View {
         if let update = updates.available {
             SettingsRow(
                 title: "MLX-Serve v\(update.version) is available",
-                explainer: "Downloads MLXCore.dmg from the release, replaces the app, and relaunches."
+                explainer: "Downloads MLX-Serve.dmg from the release, replaces the app, and relaunches."
             ) {
                 switch updates.phase {
                 case .downloading(let fraction):

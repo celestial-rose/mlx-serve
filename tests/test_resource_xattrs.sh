@@ -6,7 +6,7 @@
 # exported image) arrives with com.apple.FinderInfo attached. codesign then
 # refuses the ENTIRE bundle:
 #
-#   MLX Core.app: resource fork, Finder information, or similar detritus not allowed
+#   MLX-Serve.app: resource fork, Finder information, or similar detritus not allowed
 #
 # — three minutes into a build, and naming the BINARY rather than the file that
 # actually brought the metadata in, which sends you looking in the wrong place.

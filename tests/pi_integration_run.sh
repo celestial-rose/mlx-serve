@@ -26,7 +26,7 @@ set -u
 REPO="/Users/david/projects/agents/mlx-serve"
 RESULTS="$REPO/tests/pi-results"
 SUMMARY="$REPO/tests/pi_integration_run.summary.tsv"
-MLX_BIN="${MLX_BIN:-$REPO/app/MLX Core.app/Contents/MacOS/mlx-serve}"
+MLX_BIN="${MLX_BIN:-$REPO/app/MLX-Serve.app/Contents/MacOS/mlx-serve}"
 PI_MODELS_JSON="$HOME/.pi/agent/models.json"
 PORT="${PORT:-8080}"
 SERVED_MODEL="${SERVED_MODEL:-}"

@@ -91,8 +91,8 @@ final class UpdateCheckerTests: XCTestCase {
         assets: [(name: String, url: String)] = [
             ("mlx-serve-bin-macos-arm64.tar.gz",
              "https://github.com/ddalcu/mlx-serve/releases/download/v26.9.0/mlx-serve-bin-macos-arm64.tar.gz"),
-            ("MLXCore.dmg",
-             "https://github.com/ddalcu/mlx-serve/releases/download/v26.9.0/MLXCore.dmg"),
+            ("MLX-Serve.dmg",
+             "https://github.com/ddalcu/mlx-serve/releases/download/v26.9.0/MLX-Serve.dmg"),
         ]
     ) -> Data {
         let assetJSON = assets
@@ -118,7 +118,7 @@ final class UpdateCheckerTests: XCTestCase {
         XCTAssertEqual(update.version, "26.9.0")
         XCTAssertEqual(update.tagName, "v26.9.0")
         XCTAssertEqual(update.dmgURL.absoluteString,
-                       "https://github.com/ddalcu/mlx-serve/releases/download/v26.9.0/MLXCore.dmg")
+                       "https://github.com/ddalcu/mlx-serve/releases/download/v26.9.0/MLX-Serve.dmg")
         XCTAssertEqual(update.releasePageURL?.absoluteString,
                        "https://github.com/ddalcu/mlx-serve/releases/tag/v26.9.0")
         XCTAssertTrue(update.releaseNotes.contains("headline"))
@@ -207,12 +207,12 @@ final class UpdateCheckerTests: XCTestCase {
         // DMGs also contain the /Applications symlink + hidden metadata; the
         // finder must return the one real .app bundle.
         try FileManager.default.createDirectory(
-            at: mount.appendingPathComponent("MLX Core.app"), withIntermediateDirectories: true)
+            at: mount.appendingPathComponent("MLX-Serve.app"), withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(
             at: mount.appendingPathComponent("Applications"),
             withDestinationURL: URL(fileURLWithPath: "/Applications"))
         let found = UpdateChecker.findAppBundle(inMountedDMG: mount)
-        XCTAssertEqual(found?.lastPathComponent, "MLX Core.app")
+        XCTAssertEqual(found?.lastPathComponent, "MLX-Serve.app")
     }
 
     func testFindAppBundleNilWhenNoAppPresent() throws {
@@ -225,10 +225,17 @@ final class UpdateCheckerTests: XCTestCase {
     /// .build must return nil so the installer falls back to opening the DMG.
     func testInstallTargetRequiresARealAppBundle() throws {
         let dir = try makeTempDir()
-        let app = dir.appendingPathComponent("MLX Core.app")
+        let app = dir.appendingPathComponent("MLX-Serve.app")
         try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
         XCTAssertEqual(UpdateChecker.installTarget(for: app), app)
         XCTAssertNil(UpdateChecker.installTarget(
             for: dir.appendingPathComponent("not-a-bundle")))
+    }
+
+    /// The update lands under the DMG's app name, so a renamed bundle replaces the old one.
+    func testInstallDestinationTakesTheNewAppName() {
+        let old = URL(fileURLWithPath: "/Applications/MLX-Serve.app")
+        XCTAssertEqual(UpdateChecker.installDestination(replacing: old, newAppName: "MLX-Serve.app").path,
+                       "/Applications/MLX-Serve.app")
     }
 }

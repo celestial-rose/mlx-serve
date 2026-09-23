@@ -51,15 +51,15 @@ echo "════════════════════════�
 echo ""
 
 # ── Locate or build the .app, then launch ──
-# Prefer an existing build in this order: dev build (app/MLX Core.app) >
-# installed (/Applications/MLX Core.app). If neither exists, build a dev
+# Prefer an existing build in this order: dev build (app/MLX-Serve.app) >
+# installed (/Applications/MLX-Serve.app). If neither exists, build a dev
 # .app via app/build.sh with notarization skipped (signing still happens —
 # SKIP_NOTARIZE=1 only short-circuits the Apple-Notary submission step).
 locate_app() {
-    if [[ -d "$REPO_ROOT/app/MLX Core.app" ]]; then
-        echo "$REPO_ROOT/app/MLX Core.app"
-    elif [[ -d "/Applications/MLX Core.app" ]]; then
-        echo "/Applications/MLX Core.app"
+    if [[ -d "$REPO_ROOT/app/MLX-Serve.app" ]]; then
+        echo "$REPO_ROOT/app/MLX-Serve.app"
+    elif [[ -d "/Applications/MLX-Serve.app" ]]; then
+        echo "/Applications/MLX-Serve.app"
     else
         echo ""
     fi
@@ -72,7 +72,7 @@ ensure_app_running() {
     fi
     local app_path; app_path="$(locate_app)"
     if [[ -z "$app_path" ]]; then
-        log "No MLX Core.app on disk — building via app/build.sh (SKIP_NOTARIZE=1)..."
+        log "No MLX-Serve.app on disk — building via app/build.sh (SKIP_NOTARIZE=1)..."
         if ! SKIP_NOTARIZE=1 bash "$REPO_ROOT/app/build.sh" >>"$LOG_FILE" 2>&1; then
             echo -e "${YELLOW}SKIP${NC} test_mlxcore: app/build.sh failed (see $LOG_FILE)"
             exit 0
@@ -191,7 +191,7 @@ send_chat_message() {
     local message="$1"
     if [ "$HAS_ACCESSIBILITY" = "true" ]; then
         osascript <<EOF
-tell application "MLX Core" to activate
+tell application id "com.dalcu.mlx-core" to activate
 delay 0.5
 tell application "System Events"
     tell process "MLXCore"
@@ -213,7 +213,7 @@ EOF
 new_chat_session() {
     if [ "$HAS_ACCESSIBILITY" = "true" ]; then
         osascript <<EOF
-tell application "MLX Core" to activate
+tell application id "com.dalcu.mlx-core" to activate
 delay 0.5
 tell application "System Events"
     tell process "MLXCore"

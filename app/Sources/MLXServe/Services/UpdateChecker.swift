@@ -5,7 +5,7 @@ import Foundation
 struct AppUpdate: Equatable {
     let version: String        // normalized, no "v" prefix — e.g. "26.9.0"
     let tagName: String        // "v26.9.0"
-    let dmgURL: URL            // the MLXCore.dmg release asset
+    let dmgURL: URL            // the MLX-Serve.dmg release asset
     let releaseNotes: String   // release body markdown ("" when absent)
     let releasePageURL: URL?   // https://github.com/…/releases/tag/v26.9.0
 }
@@ -13,7 +13,7 @@ struct AppUpdate: Equatable {
 /// Self-updater backed directly by the GitHub Releases API — no Sparkle, no
 /// appcast to host. `releases/latest` is fetched once a day (and on demand),
 /// the `vYY.M.N` CalVer tag is compared against `CFBundleShortVersionString`,
-/// and installing downloads the notarized `MLXCore.dmg` asset, mounts it,
+/// and installing downloads the notarized `MLX-Serve.dmg` asset, mounts it,
 /// swaps the installed bundle atomically (rename old aside → rename new in),
 /// and relaunches. Dev builds that don't run from a replaceable `.app`
 /// (swift run, xctest) fall back to opening the DMG in Finder.
@@ -26,7 +26,7 @@ final class UpdateChecker: ObservableObject {
     nonisolated static let repo = "ddalcu/mlx-serve"
     nonisolated static let latestReleaseURL = URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!
     /// The app-installer asset uploaded by the release flow (build.sh phase 7).
-    nonisolated static let preferredAssetName = "MLXCore.dmg"
+    nonisolated static let preferredAssetName = "MLX-Serve.dmg"
 
     /// The embedded llama.cpp release the bundle ships (the GGUF engine). KEEP
     /// IN SYNC with `LLAMA_TAG` in `scripts/fetch-llama.sh` — that script is the
@@ -189,6 +189,10 @@ final class UpdateChecker: ObservableObject {
         return bundleURL
     }
 
+    nonisolated static func installDestination(replacing target: URL, newAppName: String) -> URL {
+        target.deletingLastPathComponent().appendingPathComponent(newAppName)
+    }
+
     // MARK: - Checking
 
     /// Kick off the launch-time check plus a low-frequency re-check timer.
@@ -273,7 +277,7 @@ final class UpdateChecker: ObservableObject {
 
     private nonisolated func download(_ update: AppUpdate) async throws -> URL {
         let dest = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MLXCore-update-\(update.version).dmg")
+            .appendingPathComponent("MLX-Serve-update-\(update.version).dmg")
         try? FileManager.default.removeItem(at: dest)
         let (bytes, response) = try await URLSession.shared.bytes(from: update.dmgURL)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
@@ -345,10 +349,12 @@ final class UpdateChecker: ObservableObject {
         try await Self.run("/usr/bin/ditto", [newApp.path, staged.path])
 
         let old = parent.appendingPathComponent(".\(baseName)-previous.app")
+        let dest = Self.installDestination(replacing: target, newAppName: newApp.lastPathComponent)
         try? FileManager.default.removeItem(at: old)
+        if dest != target { try? FileManager.default.removeItem(at: dest) }
         try FileManager.default.moveItem(at: target, to: old)
         do {
-            try FileManager.default.moveItem(at: staged, to: target)
+            try FileManager.default.moveItem(at: staged, to: dest)
         } catch {
             try? FileManager.default.moveItem(at: old, to: target) // roll back
             throw error
@@ -364,7 +370,7 @@ final class UpdateChecker: ObservableObject {
         // fully before `open` starts the new bundle.
         let relaunch = Process()
         relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
-        relaunch.arguments = ["-c", "sleep 1; /usr/bin/open \"\(target.path)\""]
+        relaunch.arguments = ["-c", "sleep 1; /usr/bin/open \"\(dest.path)\""]
         try? relaunch.run()
         await MainActor.run { NSApplication.shared.terminate(nil) }
     }

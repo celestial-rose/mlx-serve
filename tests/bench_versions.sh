@@ -42,7 +42,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 DEV_BIN="${DEV_BIN:-$ROOT/zig-out/bin/mlx-serve}"
-SHIPPED_BIN="${SHIPPED_BIN:-/Applications/MLX Core.app/Contents/MacOS/mlx-serve}"
+SHIPPED_BIN="${SHIPPED_BIN:-/Applications/MLX-Serve.app/Contents/MacOS/mlx-serve}"
 LLMPROBE="${LLMPROBE:-npx --yes llmprobe@latest}"
 PORT="${BENCH_PORT:-11260}"
 RUNS_ROOT="${RUNS_ROOT:-$HOME/claude-tmp/bench-versions}"

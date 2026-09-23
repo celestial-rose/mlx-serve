@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-APP_NAME="MLX Core"
+APP_NAME="MLX-Serve"
 BUNDLE_ID="com.dalcu.mlx-core"
 
 # FAST_DEV=1 trades everything a RELEASE needs for iteration speed: an
@@ -590,7 +590,7 @@ fi
 
 # ── Phase 7: Create DMG installer ──
 echo "→ Creating DMG..."
-DMG_PATH="$SCRIPT_DIR/MLXCore.dmg"
+DMG_PATH="$SCRIPT_DIR/MLX-Serve.dmg"
 bash "$PROJECT_ROOT/scripts/create-dmg.sh" "$APP" "$DMG_PATH"
 
 echo ""

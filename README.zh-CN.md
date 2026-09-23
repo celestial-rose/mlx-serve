@@ -17,7 +17,7 @@
 
 *本文件译自 [README.md](README.md)，如与英文原文有出入，以英文原文为准。*
 
-**[mlxserve.com](https://mlxserve.com/)** · [下载 MLX Core.app](https://github.com/ddalcu/mlx-serve/releases/latest) · [文档](#文档) · [更新日志](CHANGELOG.md)
+**[mlxserve.com](https://mlxserve.com/)** · [下载 MLX-Serve.app](https://github.com/ddalcu/mlx-serve/releases/latest) · [文档](#文档) · [更新日志](CHANGELOG.md)
 
 mlx-serve 是一个原生 Zig 服务器，让**任意 LLM 都能跑在 Apple Silicon 上** —— 既跑 MLX 格式的模型，也跑 HuggingFace 上的每一个 GGUF（Qwen、Llama、Mistral、Gemma、DeepSeek V4 Flash，还有成千上万个）。它开箱即用，同时暴露**兼容 OpenAI** *与* **兼容 Anthropic** 的 HTTP API，所以同一个 `http://localhost:11234` 就能服务 Claude Code、OpenAI SDK、Continue、Cursor、Open WebUI，以及任何支持这两种协议的客户端。文本之外，同一个服务器还能在 MLX 上原生生成**图像、视频、音乐、语音（含语音克隆）与 3D 模型**。随包提供 **MLX Core** —— 一款带聊天、Agent 模式、MCP 工具调用与模型管理的 macOS 菜单栏应用。
 
@@ -29,7 +29,7 @@ mlx-serve 是一个原生 Zig 服务器，让**任意 LLM 都能跑在 Apple Sil
 
 **MLX Core** 是一款已签名、已公证的 macOS 菜单栏应用，内置服务器。用带进度界面的方式浏览和下载模型、聊天、用 MCP 工具跑 Agent 模式、生成图像 / 视频 / 音乐 / 语音 / 3D，并在设置窗口里调整每一项服务器参数。不需要终端，没有任何要配置的东西。它底下的服务器与 CLI 运行的是同一个二进制、同一个 `http://localhost:11234`，所以应用运行期间，Claude Code 和任何 OpenAI 或 Anthropic 客户端都能直接连上。
 
-[<img src="website/appiconb.png" width="48" align="center">](https://github.com/ddalcu/mlx-serve/releases/latest) **[下载 MLX Core.app](https://github.com/ddalcu/mlx-serve/releases/latest)** —— macOS（Apple Silicon）最新版本
+[<img src="website/appiconb.png" width="48" align="center">](https://github.com/ddalcu/mlx-serve/releases/latest) **[下载 MLX-Serve.app](https://github.com/ddalcu/mlx-serve/releases/latest)** —— macOS（Apple Silicon）最新版本
 
 ### 通过 Homebrew 安装
 

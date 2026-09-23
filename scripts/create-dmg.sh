@@ -1,5 +1,5 @@
 #!/bin/bash
-# Creates a DMG installer with drag-to-Applications for MLX Core.
+# Creates a DMG installer with drag-to-Applications for MLX-Serve.
 # Usage: scripts/create-dmg.sh <path-to-app> [output.dmg]
 #
 # Self-contained (hdiutil + a tolerant Finder AppleScript) on purpose: the
@@ -10,9 +10,9 @@
 # .dmg is produced regardless of whether the (purely cosmetic) styling succeeds.
 set -euo pipefail
 
-APP_PATH="${1:?Usage: $0 <path/to/MLX Core.app> [output.dmg]}"
-DMG_PATH="${2:-MLXCore.dmg}"
-VOLNAME="MLX Core"
+APP_PATH="${1:?Usage: $0 <path/to/MLX-Serve.app> [output.dmg]}"
+DMG_PATH="${2:-MLX-Serve.dmg}"
+VOLNAME="MLX-Serve"
 
 if [ ! -d "$APP_PATH" ]; then
     echo "ERROR: $APP_PATH not found"
