@@ -63,13 +63,14 @@ curl -sf "$BASE/health" >/dev/null 2>&1 || { echo "FAIL: server did not come up"
 TOOLS='[{"name":"get_weather","description":"Get current weather for a city","input_schema":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}]'
 
 # Validate an SSE capture: block lifecycle + no think tags in text deltas.
-# Prints "OK <n_text> <n_thinking> <n_tool_use>" or "ERR <reason>".
+# Prints "OK <n_text> <n_thinking> <n_tool_use> <n_thinking_deltas>" or "ERR <reason>".
 validate() {
     python3 - "$1" <<'EOF'
 import json, sys
 
 open_blocks = {}   # index -> type
 counts = {"text": 0, "thinking": 0, "tool_use": 0}
+thinking_deltas = 0
 err = None
 saw_message_stop = False
 
@@ -95,6 +96,8 @@ for line in open(sys.argv[1]):
         if idx not in open_blocks:
             err = err or f"delta for unopened index {idx}"
         d = ev.get("delta", {})
+        if d.get("type") == "thinking_delta":
+            thinking_deltas += 1
         if d.get("type") == "text_delta":
             txt = d.get("text", "")
             if "</think>" in txt or "<think>" in txt:
@@ -115,7 +118,7 @@ if not saw_message_stop:
 if err:
     print(f"ERR {err}")
 else:
-    print(f"OK {counts['text']} {counts['thinking']} {counts['tool_use']}")
+    print(f"OK {counts['text']} {counts['thinking']} {counts['tool_use']} {thinking_deltas}")
 EOF
 }
 
@@ -138,6 +141,8 @@ echo "    -> $V1"
 check "protocol-valid block lifecycle, no think-tag leak" "$([ "${V1%% *}" = "OK" ] && echo 1 || echo 0)"
 N_THINK1=$(echo "$V1" | awk '{print $3}')
 check "thinking arrives as thinking_delta block(s)" "$([ "${N_THINK1:-0}" -ge 1 ] 2>/dev/null && echo 1 || echo 0)"
+N_TDELTA1=$(echo "$V1" | awk '{print $5}')
+check "thinking streams incrementally, not one dump at </think>" "$([ "${N_TDELTA1:-0}" -ge 2 ] 2>/dev/null && echo 1 || echo 0)"
 N_TEXT1=$(echo "$V1" | awk '{print $2}')
 check "visible answer arrives as text block(s)" "$([ "${N_TEXT1:-0}" -ge 1 ] 2>/dev/null && echo 1 || echo 0)"
 

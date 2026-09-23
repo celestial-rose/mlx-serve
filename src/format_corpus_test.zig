@@ -2084,6 +2084,59 @@ test "format corpus: streaming think-gate never leaks thinking mid-stream" {
     try testing.expectEqual(chat.StreamThinkGate.flush_text, chat.streamThinkGate("The visible answer.", true, true));
 }
 
+/// Length of a `<|…>` special-token marker starting `s`, or null.
+fn specialMarkerLenAt(s: []const u8) ?usize {
+    if (!std.mem.startsWith(u8, s, "<|")) return null;
+    for (s[2..@min(s.len, 40)], 2..) |c, k| {
+        if (c == '<') return null;
+        if (c == '>') return k + 1;
+    }
+    return null;
+}
+
+test "format corpus: reasoning streamed mid-thought is a prefix of the delivered reasoning" {
+    // Replay of the tools-path stream order both SSE handlers use, byte by byte
+    // except `<|…>` markers, which are special tokens and arrive whole:
+    // tool hold first, then the think gate; `.hold_thinking` streams the
+    // unsent tail of the split so far. A delta cannot be retracted, so every
+    // streamed byte (bar trailing whitespace the final trim drops) must be
+    // reasoning the finished split also delivers — no tag, header or tool text.
+    const allocator = testing.allocator;
+    for (corpus) |entry| {
+        var sent = std.ArrayList(u8).empty;
+        defer sent.deinit(allocator);
+        var scan: chat.ThinkScan = .{};
+        var streamed: usize = 0;
+        var final: ?[]const u8 = null;
+        var content_started = false;
+        var i: usize = 0;
+        while (i < entry.raw.len) {
+            i += specialMarkerLenAt(entry.raw[i..]) orelse 1;
+            const buf = entry.raw[0..i];
+            if (chat.streamShouldBufferForTools(buf)) continue;
+            switch (chat.streamThinkGateScan(buf, entry.thinking, false, entry.opened_by_template, &scan)) {
+                .hold_thinking => if (!content_started) {
+                    const rc = chat.streamableReasoning(chat.splitThinkBlock(buf, true, entry.opened_by_template).reasoning_content orelse continue);
+                    if (chat.unstreamedReasoning(rc, streamed)) |fresh| {
+                        try sent.appendSlice(allocator, fresh);
+                        streamed = rc.len;
+                    }
+                },
+                .split_think => {
+                    final = chat.splitThinkBlock(buf, true, entry.opened_by_template).reasoning_content;
+                    break;
+                },
+                .flush_text => content_started = true,
+            }
+        }
+        const norm = try chat.normalizeEmbeddedThinkBlocks(allocator, entry.raw);
+        defer if (norm) |n| allocator.free(n);
+        if (final == null) final = chat.splitThinkBlock(norm orelse entry.raw, true, entry.opened_by_template).reasoning_content;
+        const got = std.mem.trimEnd(u8, sent.items, " \t\r\n");
+        if (!std.mem.startsWith(u8, final orelse "", got)) try fail(entry, "streamed reasoning is not a prefix of the delivered reasoning", got);
+    }
+}
+
 test "format corpus: streaming tool buffer never flushes Inkling call text" {
     // Replay every Inkling tool-call entry through the server's has_tools
     // streaming order (chat.streamShouldBufferForTools FIRST, then the think

@@ -2983,7 +2983,8 @@ fn functionOpenerHoldsForTools(buf: []const u8) bool {
 /// streamed as visible text and a raw `</think>` leaked into Claude Code
 /// transcripts (2026-06-10 live).
 ///
-///   .hold_thinking — inside an unclosed think block; buffer, emit nothing
+///   .hold_thinking — inside an unclosed think block; buffer, stream only the
+///                    reasoning not yet sent (`unstreamedReasoning`)
 ///   .split_think   — close tag arrived; splitThinkBlock once, emit
 ///                    reasoning + visible remainder, clear the buffer, and
 ///                    set think_closed for the rest of the turn
@@ -3238,6 +3239,12 @@ pub fn streamContentLead(chunk: []const u8, content_started: bool) []const u8 {
 pub fn unstreamedReasoning(reasoning: []const u8, already: usize) ?[]const u8 {
     if (already >= reasoning.len) return null;
     return reasoning[already..];
+}
+
+/// The part of an unclosed thought safe to stream: a close tag still arriving
+/// in pieces (`</thi`) is held back until the next token decides it.
+pub fn streamableReasoning(so_far: []const u8) []const u8 {
+    return so_far[0 .. so_far.len - partialThinkCloseSuffixLen(so_far)];
 }
 
 /// Parse tool calls from model output text.
