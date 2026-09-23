@@ -13,9 +13,23 @@ pub const Override = struct {
     kv_quant: ?kv_quant.KVQuantConfig = null,
     mtp: ?bool = null,
     mtp_acceptance: ?mtp_acceptance.Mode = null,
+    /// Extra template variables as a JSON object (vLLM/llama.cpp
+    /// `chat_template_kwargs`), e.g. `{"preserve_thinking": true}`. Owned.
+    chat_template_kwargs: ?[]const u8 = null,
+    /// Its `enable_thinking` / `reasoning_effort`: defaults for a request that
+    /// names neither. Effort owned.
+    enable_thinking: ?bool = null,
+    reasoning_effort: ?[]const u8 = null,
 
     pub fn isEmpty(o: Override) bool {
-        return o.ctx_size == null and o.kv_quant == null and o.mtp == null and o.mtp_acceptance == null;
+        return o.ctx_size == null and o.kv_quant == null and o.mtp == null and o.mtp_acceptance == null and o.chat_template_kwargs == null;
+    }
+
+    pub fn deinit(o: *Override, alloc: std.mem.Allocator) void {
+        if (o.chat_template_kwargs) |k| alloc.free(k);
+        if (o.reasoning_effort) |e| alloc.free(e);
+        o.chat_template_kwargs = null;
+        o.reasoning_effort = null;
     }
 };
 
@@ -27,7 +41,8 @@ pub const Settings = struct {
         self.parsed = null;
     }
 
-    pub fn lookup(self: *const Settings, model_path: []const u8) Override {
+    /// The returned Override owns its strings (`deinit`).
+    pub fn lookup(self: *const Settings, alloc: std.mem.Allocator, model_path: []const u8) Override {
         const p = self.parsed orelse return .{};
         const root = switch (p.value) {
             .object => |o| o,
@@ -37,7 +52,7 @@ pub const Settings = struct {
         var it = root.iterator();
         while (it.next()) |kv| {
             if (!std.mem.eql(u8, trimSlash(kv.key_ptr.*), want)) continue;
-            return fromValue(kv.value_ptr.*);
+            return fromValue(alloc, kv.value_ptr.*);
         }
         return .{};
     }
@@ -49,7 +64,7 @@ fn trimSlash(p: []const u8) []const u8 {
     return s;
 }
 
-fn fromValue(v: std.json.Value) Override {
+fn fromValue(alloc: std.mem.Allocator, v: std.json.Value) Override {
     const obj = switch (v) {
         .object => |o| o,
         else => return .{},
@@ -69,6 +84,15 @@ fn fromValue(v: std.json.Value) Override {
     if (obj.get("mtp_acceptance")) |a| switch (a) {
         .string => |name| o.mtp_acceptance = mtp_acceptance.fromName(name),
         else => {},
+    };
+    if (obj.get("chat_template_kwargs")) |k| if (k == .object) {
+        o.chat_template_kwargs = std.json.Stringify.valueAlloc(alloc, k, .{}) catch null;
+        if (k.object.get("enable_thinking")) |e| if (e == .bool) {
+            o.enable_thinking = e.bool;
+        };
+        if (k.object.get("reasoning_effort")) |e| if (e == .string) {
+            o.reasoning_effort = alloc.dupe(u8, e.string) catch null;
+        };
     };
     return o;
 }
@@ -95,18 +119,20 @@ pub fn defaultPath(buf: []u8) []const u8 {
     return std.fmt.bufPrint(buf, "{s}/.mlx-serve/model-settings.json", .{home}) catch "";
 }
 
-/// The one call load sites make: read the default file, look the model up, log a hit.
+/// The one call load sites make: read the default file, look the model up, log
+/// a hit. The caller owns the result (`Override.deinit`).
 pub fn overrideFor(alloc: std.mem.Allocator, io: std.Io, model_path: []const u8) Override {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     var s = load(alloc, io, defaultPath(&buf));
     defer s.deinit();
-    const o = s.lookup(model_path);
-    if (!o.isEmpty()) log.info("[model-settings] {s}: ctx={d} kv={s} mtp={s} accept={s}\n", .{
+    const o = s.lookup(alloc, model_path);
+    if (!o.isEmpty()) log.info("[model-settings] {s}: ctx={d} kv={s} mtp={s} accept={s} kwargs={s}\n", .{
         model_path,
         o.ctx_size orelse 0,
         if (o.kv_quant) |k| k.wireName() else "default",
         if (o.mtp) |m| (if (m) "on" else "off") else "default",
         if (o.mtp_acceptance) |a| mtp_acceptance.name(a) else "default",
+        o.chat_template_kwargs orelse "none",
     });
     return o;
 }
@@ -116,15 +142,35 @@ test "model_settings: parse + lookup with and without trailing slash" {
         \\{"/m/a/": {"ctx_size": 65536, "kv_quant": "8", "mtp": false}, "/m/b": {"kv_quant": 4}}
     );
     defer s.deinit();
-    const a = s.lookup("/m/a");
+    const t = std.testing.allocator;
+    const a = s.lookup(t, "/m/a");
     try std.testing.expectEqual(@as(?u32, 65536), a.ctx_size);
     try std.testing.expectEqual(@as(u8, 8), a.kv_quant.?.bits);
     try std.testing.expectEqual(@as(?bool, false), a.mtp);
-    const b = s.lookup("/m/b/");
+    const b = s.lookup(t, "/m/b/");
     try std.testing.expectEqual(@as(?u32, null), b.ctx_size);
     try std.testing.expectEqual(@as(u8, 4), b.kv_quant.?.bits);
     try std.testing.expectEqual(@as(?bool, null), b.mtp);
-    try std.testing.expect(s.lookup("/m/c").isEmpty());
+    try std.testing.expect(s.lookup(t, "/m/c").isEmpty());
+}
+
+test "model_settings: chat_template_kwargs is an object carried verbatim, anything else is unset" {
+    const t = std.testing.allocator;
+    var s = try parse(t,
+        \\{"/m/a": {"chat_template_kwargs": {"preserve_thinking": true, "x": [1]}}, "/m/b": {"chat_template_kwargs": "yes"},
+        \\ "/m/c": {"chat_template_kwargs": {"enable_thinking": true, "reasoning_effort": "high"}}}
+    );
+    defer s.deinit();
+    var a = s.lookup(t, "/m/a");
+    defer a.deinit(t);
+    try std.testing.expectEqualStrings("{\"preserve_thinking\":true,\"x\":[1]}", a.chat_template_kwargs.?);
+    try std.testing.expectEqual(@as(?bool, null), a.enable_thinking);
+    // The thinking keys are typed out: they are request defaults, not template text.
+    var c = s.lookup(t, "/m/c");
+    defer c.deinit(t);
+    try std.testing.expectEqual(@as(?bool, true), c.enable_thinking);
+    try std.testing.expectEqualStrings("high", c.reasoning_effort.?);
+    try std.testing.expect(s.lookup(t, "/m/b").isEmpty());
 }
 
 test "model_settings: mtp_acceptance names a mode at its default threshold" {
@@ -132,10 +178,11 @@ test "model_settings: mtp_acceptance names a mode at its default threshold" {
         \\{"/m/a": {"mtp_acceptance": "typical"}, "/m/b": {"mtp_acceptance": "tokenv3"}, "/m/c": {"mtp_acceptance": "exact"}, "/m/d": {"mtp_acceptance": "fast"}}
     );
     defer s.deinit();
-    try std.testing.expectEqual(@as(f32, 0.2), s.lookup("/m/a").mtp_acceptance.?.typical.delta);
-    try std.testing.expectEqual(@as(f32, 0.95), s.lookup("/m/b").mtp_acceptance.?.tokenv3);
-    try std.testing.expect(s.lookup("/m/c").mtp_acceptance.? == .exact);
-    try std.testing.expect(s.lookup("/m/d").isEmpty());
+    const t = std.testing.allocator;
+    try std.testing.expectEqual(@as(f32, 0.2), s.lookup(t, "/m/a").mtp_acceptance.?.typical.delta);
+    try std.testing.expectEqual(@as(f32, 0.95), s.lookup(t, "/m/b").mtp_acceptance.?.tokenv3);
+    try std.testing.expect(s.lookup(t, "/m/c").mtp_acceptance.? == .exact);
+    try std.testing.expect(s.lookup(t, "/m/d").isEmpty());
 }
 
 test "model_settings: bad values ignored, bad JSON = empty" {
@@ -143,9 +190,9 @@ test "model_settings: bad values ignored, bad JSON = empty" {
         \\{"/m/a": {"ctx_size": 0, "kv_quant": "16", "mtp": "yes", "future": 1}}
     );
     defer s.deinit();
-    try std.testing.expect(s.lookup("/m/a").isEmpty());
+    try std.testing.expect(s.lookup(std.testing.allocator, "/m/a").isEmpty());
     try std.testing.expectError(error.SyntaxError, parse(std.testing.allocator, "{nope"));
     var empty = load(std.testing.allocator, std.testing.io, "/nonexistent/model-settings.json");
     defer empty.deinit();
-    try std.testing.expect(empty.lookup("/m/a").isEmpty());
+    try std.testing.expect(empty.lookup(std.testing.allocator, "/m/a").isEmpty());
 }

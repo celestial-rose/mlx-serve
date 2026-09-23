@@ -1924,7 +1924,8 @@ pub const Scheduler = struct {
         // entry `.error_state` so /v1/models surfaces the failure (and
         // future ensureLoaded calls fail fast instead of re-tripping the
         // same parse error). FileNotFound / parse errors land here.
-        const settings = model_settings.overrideFor(self.allocator, self.io, entry.path);
+        var settings = model_settings.overrideFor(self.allocator, self.io, entry.path);
+        defer settings.deinit(self.allocator);
         const cpu_state = preloadCpuState(self.allocator, self.io, entry.path, settings.ctx_size orelse self.gguf_ctx_size) catch |err| {
             self.registry.mutex.lockUncancelable(self.io);
             self.registry.markErrorLocked(entry, @errorName(err));
@@ -1937,7 +1938,7 @@ pub const Scheduler = struct {
         var owned = cpu_state;
         var owned_active: bool = true;
         defer if (owned_active) freeCpuState(self.allocator, &owned);
-        applyModelSettings(owned.config, settings);
+        applyModelSettings(owned.config, owned.chat_config, &settings);
         // The resolved .gguf path (when this is a GGUF entry) is borrowed by
         // the LoadRequest until `done`; the engines dupe what they keep, so
         // it's released here on success AND failure.
@@ -2664,11 +2665,17 @@ const GgufRoute = struct {
 
 /// Both load construction sites (here and main.zig's startup load) stamp the
 /// per-model settings onto the config the bills and defaults read.
-pub fn applyModelSettings(config: *ModelConfig, o: model_settings.Override) void {
+/// The kwargs strings MOVE to the freshly loaded `chat_config` (same allocator).
+pub fn applyModelSettings(config: *ModelConfig, chat_config: *ChatConfig, o: *model_settings.Override) void {
     config.ctx_override = o.ctx_size orelse 0;
     config.kv_quant_override = o.kv_quant;
     config.mtp_override = o.mtp;
     config.mtp_acceptance_override = o.mtp_acceptance;
+    chat_config.chat_template_kwargs = o.chat_template_kwargs;
+    chat_config.default_enable_thinking = o.enable_thinking;
+    chat_config.default_reasoning_effort = o.reasoning_effort;
+    o.chat_template_kwargs = null;
+    o.reasoning_effort = null;
 }
 
 /// Plan 05 Phase D: pre-loaded CPU state bundle. Built by the conn thread
@@ -2732,25 +2739,7 @@ fn preloadCpuState(allocator: std.mem.Allocator, io: std.Io, model_dir: []const 
     cc.* = try chat_mod.loadChatConfig(io, allocator, model_dir);
     errdefer cc.deinit();
 
-    // Same EOS-resolution as main.zig — merge the tokenizer's chat-terminator
-    // EOS into the stop set ALWAYS, even when config.json already specified an
-    // eos_token_id. Some checkpoints (e.g. Qwen2.5-Coder-7B) set config.json
-    // eos_token_id to <|endoftext|> but end chat turns with <|im_end|>; gating
-    // on `num_eos_tokens == 0` left <|im_end|> out of the stop set and it leaked
-    // into output. Additive + dedup-guarded: only ever ADDS a declared stop.
-    if (cc.eos_token) |eos_str| {
-        if (tok.special_tokens.get(eos_str)) |eos_id| {
-            if (!config.isEosToken(eos_id)) config.addEosToken(eos_id);
-        }
-    }
-    if (tok.special_tokens.get("<|endoftext|>")) |eot_id| {
-        if (!config.isEosToken(eot_id)) config.addEosToken(eot_id);
-    }
-    if (tok.special_tokens.get("<pad>")) |pad_id| {
-        if (pad_id > 0 and !config.isEosToken(pad_id)) {
-            config.addEosToken(pad_id);
-        }
-    }
+    try config.applyTokenizer(allocator, tok, cc.eos_token, cc.chat_template);
 
     return .{ .config = config, .tok = tok, .chat_config = cc };
 }
@@ -3244,6 +3233,30 @@ test "modelDiskBytes follows HF-cache symlinks (a snapshot dir measured ZERO)" {
     defer std.testing.allocator.free(snap);
 
     try std.testing.expectEqual(@as(u64, 16), modelDiskBytes(io, snap));
+}
+
+test "preloadCpuState sets the user-turn marker (a registry load placed every image at the prompt's end)" {
+    const io = std.testing.io;
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.json", .data = "{\"model_type\":\"qwen3\",\"hidden_size\":64,\"head_dim\":16}" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "tokenizer.json", .data =
+        \\{"model":{"type":"BPE","vocab":{"user":0,"\u010a":1},"merges":[]},
+        \\ "added_tokens":[{"id":2,"content":"<|im_start|>","special":true},{"id":3,"content":"<|im_end|>","special":true}]}
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "tokenizer_config.json", .data =
+        \\{"eos_token":"<|im_end|>","chat_template":"{% for m in messages %}<|im_start|>{{ m.role }}\n{{ m.content }}<|im_end|>\n{% endfor %}"}
+    });
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path_len = try tmp.dir.realPath(io, &path_buf);
+
+    var s = try preloadCpuState(allocator, io, path_buf[0..path_len], 0);
+    defer freeCpuState(allocator, &s);
+    const want = try s.tok.encode(allocator, "<|im_start|>user\n");
+    defer allocator.free(want);
+    try std.testing.expect(want.len > 0);
+    try std.testing.expectEqualSlices(u32, want, s.config.userTurnMarkerSlice());
 }
 
 test "modelDiskBytes bills only the shards the index names (issue #274)" {

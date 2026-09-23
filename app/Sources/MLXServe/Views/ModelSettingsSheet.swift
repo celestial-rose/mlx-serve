@@ -33,6 +33,9 @@ struct ModelSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var override = ModelOverride()
+    @State private var addingCustom = false
+    @State private var customKey = ""
+    @State private var customValue = ""
     @State private var busy = false
     @State private var error: String?
 
@@ -67,7 +70,46 @@ struct ModelSettingsSheet: View {
         if rows.mtp { n += 1 }
         if rows.acceptance { n += 1 }
         if live?.loaded == true { n += 1 }
+        if !isGguf { n += 2 + override.templateKwargs.count + (addingCustom ? 1 : 0) }
         return CGFloat(44 * n + 50)
+    }
+
+    @ViewBuilder
+    private func kwargRow(_ key: String) -> some View {
+        let value = override.templateKwargs[key] ?? ""
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(key).font(.body.monospaced())
+                if let hint = TemplateKwargs.hint(for: key) {
+                    Text(L10n.text(hint)).font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if let choices = TemplateKwargs.choices(for: key) {
+                Picker("", selection: Binding(
+                    get: { TemplateKwargs.display(value) },
+                    set: { picked in
+                        override.templateKwargs[key] = choices.first { TemplateKwargs.display($0) == picked } ?? picked
+                    })) {
+                    ForEach(choices.map(TemplateKwargs.display), id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden().fixedSize()
+            } else {
+                TextField("value", text: Binding(
+                    get: { TemplateKwargs.display(value) },
+                    set: { if let v = TemplateKwargs.parse($0) { override.templateKwargs[key] = v } }))
+                    .font(.body.monospaced()).frame(width: 140)
+            }
+            Button { override.templateKwargs[key] = nil } label: { Image(systemName: "xmark") }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+        }
+    }
+
+    private func commitCustom() {
+        let key = customKey.trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty, let v = TemplateKwargs.parse(customValue) else { return }
+        override.templateKwargs[key] = v
+        customKey = ""; customValue = ""; addingCustom = false
     }
 
     private var footnote: String {
@@ -122,6 +164,40 @@ struct ModelSettingsSheet: View {
                     Text("Default").tag("")
                     ForEach(MtpAcceptanceChoice.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
                 }
+                }
+                if !isGguf {
+                    Section {
+                        ForEach(override.sortedKwargKeys, id: \.self) { key in
+                            kwargRow(key)
+                        }
+                        if addingCustom {
+                            HStack {
+                                TextField("key", text: $customKey).font(.body.monospaced())
+                                TextField("value", text: $customValue).font(.body.monospaced())
+                                    .onSubmit(commitCustom)
+                                Button("Add", action: commitCustom)
+                                    .disabled(customKey.trimmingCharacters(in: .whitespaces).isEmpty || TemplateKwargs.parse(customValue) == nil)
+                            }
+                        }
+                    } header: {
+                        HStack {
+                            Text("Chat template kwargs")
+                            Spacer()
+                            Menu {
+                                ForEach(TemplateKwargs.known, id: \.key) { k in
+                                    Button(k.key) { override.templateKwargs[k.key] = k.choices[0] }
+                                        .disabled(override.templateKwargs[k.key] != nil)
+                                }
+                                Divider()
+                                Button("Custom…") { addingCustom = true }
+                            } label: {
+                                Label("Add", systemImage: "plus")
+                            }
+                            .menuStyle(.borderlessButton).fixedSize()
+                        }
+                    } footer: {
+                        Text("Forwarded to the model's chat template. Values the request decides (thinking, effort) win.")
+                    }
                 }
                 if let live, live.loaded {
                     LabeledContent("Live") {

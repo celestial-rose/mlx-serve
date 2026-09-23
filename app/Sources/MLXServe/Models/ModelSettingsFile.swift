@@ -40,14 +40,18 @@ struct ModelOverride: Equatable {
     var kvQuant: KvQuantChoice?
     var mtp: Bool?
     var mtpAcceptance: MtpAcceptanceChoice?
+    /// `chat_template_kwargs`: variables handed to the model's Jinja template
+    /// verbatim (`TemplateKwargs` types and names them).
+    var templateKwargs: [String: Any] = [:]
     var extra: [String: Any] = [:]
 
     init(ctxSize: Int? = nil, kvQuant: KvQuantChoice? = nil, mtp: Bool? = nil,
-         mtpAcceptance: MtpAcceptanceChoice? = nil) {
+         mtpAcceptance: MtpAcceptanceChoice? = nil, templateKwargs: [String: Any] = [:]) {
         self.ctxSize = ctxSize
         self.kvQuant = kvQuant
         self.mtp = mtp
         self.mtpAcceptance = mtpAcceptance
+        self.templateKwargs = templateKwargs
     }
 
     init(json: [String: Any]) {
@@ -65,12 +69,16 @@ struct ModelOverride: Equatable {
         if let a = rest.removeValue(forKey: "mtp_acceptance") {
             if let s = a as? String { mtpAcceptance = MtpAcceptanceChoice(rawValue: s) }
         }
+        if let kw = rest.removeValue(forKey: "chat_template_kwargs") as? [String: Any] { templateKwargs = kw }
         extra = rest
     }
 
     var isEmpty: Bool { !hasSettings && extra.isEmpty }
     /// True when any field the sheet edits is set.
-    var hasSettings: Bool { ctxSize != nil || kvQuant != nil || mtp != nil || mtpAcceptance != nil }
+    var hasSettings: Bool {
+        ctxSize != nil || kvQuant != nil || mtp != nil || mtpAcceptance != nil || !templateKwargs.isEmpty
+    }
+    var sortedKwargKeys: [String] { templateKwargs.keys.sorted() }
 
     var json: [String: Any] {
         var out = extra
@@ -78,11 +86,13 @@ struct ModelOverride: Equatable {
         if let kvQuant { out["kv_quant"] = kvQuant.rawValue }
         if let mtp { out["mtp"] = mtp }
         if let mtpAcceptance { out["mtp_acceptance"] = mtpAcceptance.rawValue }
+        if !templateKwargs.isEmpty { out["chat_template_kwargs"] = templateKwargs }
         return out
     }
 
     static func == (a: ModelOverride, b: ModelOverride) -> Bool {
         a.ctxSize == b.ctxSize && a.kvQuant == b.kvQuant && a.mtp == b.mtp && a.mtpAcceptance == b.mtpAcceptance
+            && NSDictionary(dictionary: a.templateKwargs).isEqual(to: b.templateKwargs)
             && NSDictionary(dictionary: a.extra).isEqual(to: b.extra)
     }
 }
@@ -107,7 +117,7 @@ struct ModelSettingsFile {
         entries[Self.key(path)]
     }
 
-    /// Replaces the three edited fields; keys the app does not know stay.
+    /// Replaces the edited fields; keys the app does not know stay.
     mutating func set(_ o: ModelOverride, for path: String) {
         var merged = o
         if let old = entries[Self.key(path)] { merged.extra.merge(old.extra) { mine, _ in mine } }

@@ -40,6 +40,34 @@ final class ModelSettingsFileTests: XCTestCase {
         XCTAssertEqual(ModelOverride(json: ["mtp_acceptance": "fast"]).mtpAcceptance, nil)
     }
 
+    /// `chat_template_kwargs` round-trips as one object: the rows the sheet
+    /// edits are exactly what the server reads, typed values kept.
+    func testChatTemplateKwargsRoundTripAsOneObject() throws {
+        let path = tempPath()
+        try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
+                                                withIntermediateDirectories: true)
+        try """
+        {"/m/a": {"chat_template_kwargs": {"preserve_thinking": true, "other": 1}}}
+        """.write(toFile: path, atomically: true, encoding: .utf8)
+        var file = ModelSettingsFile.load(path: path)
+        var o = file.override(for: "/m/a")!
+        XCTAssertEqual(o.templateKwargs["preserve_thinking"] as? Bool, true)
+        XCTAssertTrue(o.hasSettings)
+
+        o.templateKwargs["preserve_thinking"] = false
+        o.templateKwargs["other"] = nil
+        file.set(o, for: "/m/a")
+        try file.save(path: path)
+        let text = try String(contentsOfFile: path, encoding: .utf8)
+        XCTAssertTrue(text.contains("\"preserve_thinking\" : false"), text)
+        XCTAssertFalse(text.contains("other"), text)
+
+        o.templateKwargs = [:]
+        file.set(o, for: "/m/a")
+        try file.save(path: path)
+        XCTAssertTrue(ModelSettingsFile.load(path: path).isEmpty)
+    }
+
     func testAnEmptyOverrideRemovesTheEntry() throws {
         let path = tempPath()
         var file = ModelSettingsFile()

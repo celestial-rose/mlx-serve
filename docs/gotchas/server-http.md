@@ -2295,3 +2295,14 @@ text and the media site, so the load refuses by name with the 36 GB figure in th
 Guard: `effectiveAvailableBytes is capped by the GPU working-set limit` in `scheduler.zig`.
 Not covered: the embedded engines (ds4 / llama.cpp) keep their own open-time failure.
 
+## App-loaded models placed every image at the end of the prompt (2026-09-22)
+
+A pi session on Flash-Next kept thinking "the user attached the same image again" on every
+tool turn. The log showed each request inserting the image at `prompt_len - 5`: the silent
+end-anchored fallback of `userTurnInsertPos`, which fires when there is no user-turn marker.
+Cause: `populateUserTurnMarker` (and `populateLfm2ImageTokens`) ran only on the startup
+`--model` path in `main.zig`; the registry path (`scheduler.preloadCpuState`, used by the app's
+headless start + load) had copied main's EOS merge but not these, so the marker was empty and
+the image sat after the latest tool result on every turn.
+Fix: `ModelConfig.applyTokenizer` holds all tokenizer-derived setup and both paths call it.
+Guard: `preloadCpuState sets the user-turn marker` in `scheduler.zig`.

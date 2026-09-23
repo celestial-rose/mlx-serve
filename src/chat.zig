@@ -144,9 +144,18 @@ pub const ChatConfig = struct {
     eos_token: ?[]const u8,
     add_bos_token: bool,
     allocator: std.mem.Allocator,
+    /// Template variables as a JSON object: the model's `chat_template_kwargs`
+    /// (`model-settings.json`), with a request's own merged over them per request.
+    chat_template_kwargs: ?[]const u8 = null,
+    /// The model's `enable_thinking` / `reasoning_effort` kwargs, typed: used
+    /// only when a request names neither (`server.resolveChatThinking`).
+    default_enable_thinking: ?bool = null,
+    default_reasoning_effort: ?[]const u8 = null,
 
     pub fn deinit(self: *ChatConfig) void {
         self.allocator.free(self.chat_template);
+        if (self.chat_template_kwargs) |k| self.allocator.free(k);
+        if (self.default_reasoning_effort) |e| self.allocator.free(e);
         if (self.bos_token) |t| self.allocator.free(t);
         if (self.eos_token) |t| self.allocator.free(t);
     }
@@ -1138,6 +1147,34 @@ fn k2EffortFor(effort: ?[]const u8) []const u8 {
 /// `effort` is the client's raw `reasoning_effort` string (null when the
 /// request didn't send one) — today only the dsv4 family maps it into the
 /// template; other families keep their fixed vocabulary.
+fn appendKwarg(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), key: []const u8, value: std.json.Value) !void {
+    if (buf.items.len > 1) try buf.append(allocator, ',');
+    try appendJsonString(allocator, buf, key);
+    try buf.append(allocator, ':');
+    const v = try std.json.Stringify.valueAlloc(allocator, value, .{});
+    defer allocator.free(v);
+    try buf.appendSlice(allocator, v);
+}
+
+/// A request's `chat_template_kwargs` over the model's: one object, request keys win.
+pub fn mergeTemplateKwargs(allocator: std.mem.Allocator, model_kwargs: ?[]const u8, request: std.json.ObjectMap) ![]const u8 {
+    var buf = std.ArrayList(u8).empty;
+    errdefer buf.deinit(allocator);
+    try buf.append(allocator, '{');
+    var it = request.iterator();
+    while (it.next()) |kv| try appendKwarg(allocator, &buf, kv.key_ptr.*, kv.value_ptr.*);
+    if (model_kwargs) |raw| {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, raw, .{});
+        defer parsed.deinit();
+        if (parsed.value == .object) {
+            var mit = parsed.value.object.iterator();
+            while (mit.next()) |kv| if (!request.contains(kv.key_ptr.*)) try appendKwarg(allocator, &buf, kv.key_ptr.*, kv.value_ptr.*);
+        }
+    }
+    try buf.append(allocator, '}');
+    return buf.toOwnedSlice(allocator);
+}
+
 fn serializeExtraContext(allocator: std.mem.Allocator, chat_config: *const ChatConfig, enable_thinking: bool, effort: ?[]const u8) ![]const u8 {
     var buf = std.ArrayList(u8).empty;
     errdefer buf.deinit(allocator);
@@ -1243,6 +1280,32 @@ fn serializeExtraContext(allocator: std.mem.Allocator, chat_config: *const ChatC
         try buf.appendSlice(allocator, ",\"reasoning_strength\":\"");
         try buf.appendSlice(allocator, strength);
         try buf.append(allocator, '"');
+    }
+
+    var kwargs: ?std.json.Parsed(std.json.Value) = null;
+    defer if (kwargs) |*k| k.deinit();
+    if (chat_config.chat_template_kwargs) |raw| {
+        kwargs = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch null;
+    }
+    const kw_obj: ?std.json.ObjectMap = if (kwargs) |k| (if (k.value == .object) k.value.object else null) else null;
+
+    // Qwen3.8 renders EVERY turn's <think> when `preserve_thinking` is
+    // undefined; round-tripped agent reasoning then swamps the prompt.
+    if (std.mem.indexOf(u8, chat_config.chat_template, "preserve_thinking") != null and
+        (kw_obj == null or kw_obj.?.get("preserve_thinking") == null))
+    {
+        try buf.appendSlice(allocator, ",\"preserve_thinking\":false");
+    }
+
+    if (kw_obj) |obj| {
+        // Set above from resolved values, or the wrapper's own context.
+        const reserved = [_][]const u8{ "bos_token", "eos_token", "enable_thinking", "reasoning_effort", "thinking_mode", "reasoning_strength", "messages", "tools", "add_generation_prompt" };
+        var it = obj.iterator();
+        while (it.next()) |kv| {
+            var skip = false;
+            for (reserved) |r| skip = skip or std.mem.eql(u8, r, kv.key_ptr.*);
+            if (!skip) try appendKwarg(allocator, &buf, kv.key_ptr.*, kv.value_ptr.*);
+        }
     }
 
     try buf.append(allocator, '}');
@@ -13300,6 +13363,63 @@ test "serializeExtraContext: muse maps effort onto reasoning_strength" {
     const r = try serializeExtraContext(allocator, &plain, true, null);
     defer allocator.free(r);
     try testing.expect(std.mem.indexOf(u8, r, "reasoning_strength") == null);
+}
+
+test "serializeExtraContext: preserve_thinking defaults false; chat_template_kwargs fill what the request did not decide" {
+    // Qwen3.8's template keeps EVERY turn's <think> block when the variable is
+    // undefined; the bar is that prior-turn reasoning stays out of the prompt.
+    const allocator = testing.allocator;
+    var qwen38 = ChatConfig{
+        .chat_template = "…{%- if preserve_thinking is undefined or preserve_thinking is true or loop.index0 > ns.last_query_index %}…",
+        .bos_token = null,
+        .eos_token = null,
+        .add_bos_token = false,
+        .allocator = allocator,
+    };
+    const r = try serializeExtraContext(allocator, &qwen38, true, null);
+    defer allocator.free(r);
+    try testing.expect(std.mem.indexOf(u8, r, "\"preserve_thinking\":false") != null);
+    // The per-model kwargs turn Qwen's trained-for behaviour back on and carry
+    // any other key; a key the request decides (enable_thinking) is not theirs.
+    qwen38.chat_template_kwargs = "{\"preserve_thinking\":true,\"custom\":{\"n\":1},\"enable_thinking\":false}";
+    const on = try serializeExtraContext(allocator, &qwen38, true, null);
+    defer allocator.free(on);
+    try testing.expect(std.mem.indexOf(u8, on, "\"preserve_thinking\":true") != null);
+    try testing.expect(std.mem.indexOf(u8, on, "\"preserve_thinking\":false") == null);
+    try testing.expect(std.mem.indexOf(u8, on, "\"custom\":{\"n\":1}") != null);
+    try testing.expect(std.mem.indexOf(u8, on, "\"enable_thinking\":true") != null);
+    try testing.expect(std.mem.indexOf(u8, on, "\"enable_thinking\":false") == null);
+
+    // A kwarg can never replace the conversation the wrapper puts in context.
+    qwen38.chat_template_kwargs = "{\"messages\":[],\"tools\":[],\"add_generation_prompt\":false}";
+    const core = try serializeExtraContext(allocator, &qwen38, true, null);
+    defer allocator.free(core);
+    for ([_][]const u8{ "messages", "tools", "add_generation_prompt" }) |k| try testing.expect(std.mem.indexOf(u8, core, k) == null);
+
+    var plain = ChatConfig{
+        .chat_template = "{{ messages }}",
+        .bos_token = null,
+        .eos_token = null,
+        .add_bos_token = false,
+        .allocator = allocator,
+    };
+    const p = try serializeExtraContext(allocator, &plain, true, null);
+    defer allocator.free(p);
+    try testing.expect(std.mem.indexOf(u8, p, "preserve_thinking") == null);
+}
+
+test "mergeTemplateKwargs: request keys win, the model's fill the rest" {
+    const allocator = testing.allocator;
+    const req = try std.json.parseFromSlice(std.json.Value, allocator, "{\"preserve_thinking\":true,\"x\":1}", .{});
+    defer req.deinit();
+    const merged = try mergeTemplateKwargs(allocator, "{\"preserve_thinking\":false,\"y\":\"m\"}", req.value.object);
+    defer allocator.free(merged);
+    const got = try std.json.parseFromSlice(std.json.Value, allocator, merged, .{});
+    defer got.deinit();
+    try testing.expectEqual(true, got.value.object.get("preserve_thinking").?.bool);
+    try testing.expectEqual(@as(i64, 1), got.value.object.get("x").?.integer);
+    try testing.expectEqualStrings("m", got.value.object.get("y").?.string);
+    try testing.expectEqual(@as(usize, 3), got.value.object.count());
 }
 
 test "renderChatTemplate: dsv4 template renders tools + DSML history + tool_result (hermetic)" {

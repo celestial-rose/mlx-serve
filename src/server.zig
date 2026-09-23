@@ -7816,8 +7816,15 @@ test "implicitEffortBudget: silence on the Qwen3.8 family gets low's budget" {
     try std.testing.expectEqual(@as(i32, -1), implicitEffortBudget("{{ reasoning_effort }}", true, -1));
 }
 
+/// A request field at the top level, else inside vLLM's `chat_template_kwargs` object.
+fn requestField(root: std.json.ObjectMap, name: []const u8) ?std.json.Value {
+    if (root.get(name)) |v| return v;
+    const kw = root.get("chat_template_kwargs") orelse return null;
+    return if (kw == .object) kw.object.get(name) else null;
+}
+
 fn parseReasoningEffort(root: std.json.ObjectMap, default_budget: i32, template_consumes_effort: bool) ?ReasoningEffort {
-    const v = root.get("reasoning_effort") orelse return null;
+    const v = requestField(root, "reasoning_effort") orelse return null;
     if (v != .string) return null;
     return reasoningEffortFromWord(v.string, default_budget, template_consumes_effort);
 }
@@ -7882,12 +7889,39 @@ fn parseAnthropicOutputConfig(root: std.json.ObjectMap) AnthropicOutputConfig {
 ///
 /// The two knobs stay OR'd when both are present, as they always were.
 fn resolveEnableThinking(root: std.json.ObjectMap, effort_cfg: ?ReasoningEffort, arch_default: bool) bool {
-    const et: ?bool = if (root.get("enable_thinking")) |v|
+    const et: ?bool = if (requestField(root, "enable_thinking")) |v|
         (if (v == .bool) v.bool else null)
     else
         null;
-    if (et == null and effort_cfg == null) return arch_default;
-    return (et orelse false) or (if (effort_cfg) |e| e.enable else false);
+    return thinkingFrom(et, effort_cfg, arch_default);
+}
+
+fn thinkingFrom(enable: ?bool, effort: ?ReasoningEffort, fallback: bool) bool {
+    if (enable == null and effort == null) return fallback;
+    return (enable orelse false) or (if (effort) |e| e.enable else false);
+}
+
+/// The model's `chat_template_kwargs` `reasoning_effort`, read like a request's.
+fn modelEffort(cc: *const chat_mod.ChatConfig, default_budget: i32, word_only: bool) ?ReasoningEffort {
+    const word = cc.default_reasoning_effort orelse return null;
+    return reasoningEffortFromWord(word, default_budget, word_only);
+}
+
+/// The model's effort word fills in only when thinking ended up on and the request named none.
+fn modelEffortIfThinking(model: ?ReasoningEffort, thinking: bool) ?ReasoningEffort {
+    const m = model orelse return null;
+    return if (thinking and m.enable) m else null;
+}
+
+const ChatThinking = struct { enable: bool, effort: ?ReasoningEffort };
+
+/// Request first; the model's `chat_template_kwargs` thinking keys act as a
+/// default request, consulted only when the request names neither; then the arch.
+fn resolveChatThinking(root: std.json.ObjectMap, cc: *const chat_mod.ChatConfig, arch_default: bool, default_budget: i32, word_only: bool) ChatThinking {
+    const model = modelEffort(cc, default_budget, word_only);
+    const request = parseReasoningEffort(root, default_budget, word_only);
+    const enable = resolveEnableThinking(root, request, thinkingFrom(cc.default_enable_thinking, model, arch_default));
+    return .{ .enable = enable, .effort = request orelse modelEffortIfThinking(model, enable) };
 }
 
 const SchemaThinkingPolicy = enum {
@@ -8482,8 +8516,9 @@ fn handleChatCompletions(
     // Either switch turns thinking on; effort "none" alone never does.
     // A request naming NEITHER takes the arch default (off for every arch but
     // the ones whose vendor documents thinking-on).
-    const effort_cfg = parseReasoningEffort(root, server_config.default_reasoning_budget, effortWordOnly(allocator, lm, tok));
-    var enable_thinking = resolveEnableThinking(root, effort_cfg, config.defaultEnableThinking(tools_json != null));
+    const thinking = resolveChatThinking(root, chat_config, config.defaultEnableThinking(tools_json != null), server_config.default_reasoning_budget, effortWordOnly(allocator, lm, tok));
+    const effort_cfg = thinking.effort;
+    var enable_thinking = thinking.enable;
 
     // Reasoning budget (max tokens in <think> block, -1 = unlimited):
     // explicit reasoning_budget_tokens > effort-mapped budget > --reasoning-budget flag
@@ -8626,8 +8661,16 @@ fn handleChatCompletions(
         return;
     };
     const active_media = activeTurnMediaMessage(messages.items, continue_final);
+    // The request's `chat_template_kwargs` merge over the model's for this render only.
+    var render_config = chat_config.*;
+    const request_kwargs: ?[]const u8 = if (root.get("chat_template_kwargs")) |kw|
+        (if (kw == .object) try chat_mod.mergeTemplateKwargs(allocator, chat_config.chat_template_kwargs, kw.object) else null)
+    else
+        null;
+    defer if (request_kwargs) |k| allocator.free(k);
+    if (request_kwargs) |k| render_config.chat_template_kwargs = k;
     var tokenize_sw = Stopwatch.init(stream.io);
-    var prompt_ids_raw = try cachedFormatChat(allocator, stream.io, lm, tok, chat_config, messages.items, tools_json, tool_choice_instruction, enable_thinking, if (effort_cfg) |e| e.effort else null, continue_final);
+    var prompt_ids_raw = try cachedFormatChat(allocator, stream.io, lm, tok, &render_config, messages.items, tools_json, tool_choice_instruction, enable_thinking, if (effort_cfg) |e| e.effort else null, continue_final);
     var schema_proto: rp_mod.Protocol = undefined;
     var schema_proto_active = false;
     if (grammar_schema_val != null and !has_tools and enable_thinking and reasoning_budget < 0) {
@@ -8645,7 +8688,7 @@ fn handleChatCompletions(
             schema_proto_active = false;
             allocator.free(prompt_ids_raw);
             enable_thinking = false;
-            prompt_ids_raw = try cachedFormatChat(allocator, stream.io, lm, tok, chat_config, messages.items, tools_json, tool_choice_instruction, false, if (effort_cfg) |e| e.effort else null, continue_final);
+            prompt_ids_raw = try cachedFormatChat(allocator, stream.io, lm, tok, &render_config, messages.items, tools_json, tool_choice_instruction, false, if (effort_cfg) |e| e.effort else null, continue_final);
             log.info("[grammar] {s}; rerendered with thinking off\n", .{if (reasoning_budget >= 0) "finite reasoning budget" else "reasoning protocol unsupported for this model/prompt"});
         },
         .no_mask, .token_zero => schema_proto_active = false,
@@ -12687,7 +12730,7 @@ fn cachedFormatChat(
 ) ![]u32 {
     const cache_ptr: ?*tokenize_cache_mod.TokenizeCache = if (lm.tokenize_cache) |*tc| tc else null;
     const key_opt: ?u64 = if (cache_ptr != null)
-        tokenize_cache_mod.TokenizeCache.keyFor(messages, tools_json, tool_choice_instruction, enable_thinking, reasoning_effort, continue_final)
+        tokenize_cache_mod.TokenizeCache.keyFor(messages, tools_json, tool_choice_instruction, enable_thinking, reasoning_effort, continue_final, chat_config.chat_template_kwargs)
     else
         null;
     if (cache_ptr) |cache| if (key_opt) |key| {
@@ -15320,8 +15363,10 @@ fn handleAnthropicMessages(
     // (muse+tools delivers its always-on reasoning as thinking blocks rather
     // than paying for it and discarding it); a PRESENT object decides
     // explicitly, exactly as before.
+    const word_only = effortWordOnly(allocator, lm, tok);
+    const model_effort = modelEffort(chat_config, server_config.default_reasoning_budget, word_only);
     var enable_thinking = if (root.get("thinking") == null)
-        config.defaultEnableThinking(root.get("tools") != null)
+        thinkingFrom(chat_config.default_enable_thinking, model_effort, config.defaultEnableThinking(root.get("tools") != null))
     else
         false;
     var reasoning_budget: i32 = server_config.default_reasoning_budget;
@@ -15354,10 +15399,13 @@ fn handleAnthropicMessages(
     }
     var effort_word: ?[]const u8 = null;
     if (output_cfg.effort) |word| {
-        const cfg = reasoningEffortFromWord(word, server_config.default_reasoning_budget, effortWordOnly(allocator, lm, tok));
+        const cfg = reasoningEffortFromWord(word, server_config.default_reasoning_budget, word_only);
         effort_word = cfg.effort;
         if (!budget_explicit) reasoning_budget = cfg.budget;
         enable_thinking = if (root.get("thinking") == null) cfg.enable else (enable_thinking or cfg.enable);
+    } else if (modelEffortIfThinking(model_effort, enable_thinking)) |cfg| {
+        effort_word = cfg.effort;
+        if (!budget_explicit) reasoning_budget = cfg.budget;
     } else if (!budget_explicit) reasoning_budget = implicitEffortBudgetFor(allocator, lm, tok);
     const is_stream = if (root.get("stream")) |v| v == .bool and v.bool else false;
     const model_name = if (root.get("model")) |v| (if (v == .string) v.string else config.model_type) else config.model_type;
@@ -21434,6 +21482,35 @@ test "resolveEnableThinking: an explicit request value outranks the arch default
         defer parsed.deinit();
         const effort = parseReasoningEffort(parsed.value.object, -1, false);
         try std.testing.expectEqual(case.want, resolveEnableThinking(parsed.value.object, effort, case.arch));
+    }
+}
+
+test "resolveChatThinking: the request decides, the model's chat_template_kwargs fill its silence, then the arch" {
+    const allocator = std.testing.allocator;
+    var cc = chat_mod.ChatConfig{ .chat_template = "", .bos_token = null, .eos_token = null, .add_bos_token = false, .allocator = allocator };
+    const Case = struct { body: []const u8, model_on: ?bool = null, model_effort: ?[]const u8 = null, arch: bool = false, want: bool, effort: ?[]const u8 = null };
+    const cases = [_]Case{
+        .{ .body = "{}", .arch = true, .want = true },
+        .{ .body = "{}", .model_on = true, .want = true },
+        .{ .body = "{}", .model_on = false, .arch = true, .want = false },
+        .{ .body = "{}", .model_effort = "high", .want = true, .effort = "high" },
+        .{ .body = "{}", .model_effort = "none", .arch = true, .want = false },
+        .{ .body = "{\"enable_thinking\":false}", .model_effort = "high", .want = false },
+        .{ .body = "{\"enable_thinking\":true}", .model_effort = "high", .want = true, .effort = "high" },
+        .{ .body = "{\"reasoning_effort\":\"low\"}", .model_effort = "high", .want = true, .effort = "low" },
+        // vLLM's spelling; the top-level field wins over it.
+        .{ .body = "{\"chat_template_kwargs\":{\"enable_thinking\":false}}", .model_on = true, .want = false },
+        .{ .body = "{\"chat_template_kwargs\":{\"reasoning_effort\":\"medium\"}}", .want = true, .effort = "medium" },
+        .{ .body = "{\"enable_thinking\":true,\"chat_template_kwargs\":{\"enable_thinking\":false}}", .want = true },
+    };
+    for (cases) |case| {
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, case.body, .{});
+        defer parsed.deinit();
+        cc.default_enable_thinking = case.model_on;
+        cc.default_reasoning_effort = case.model_effort;
+        const got = resolveChatThinking(parsed.value.object, &cc, case.arch, -1, false);
+        try std.testing.expectEqual(case.want, got.enable);
+        if (case.effort) |w| try std.testing.expectEqualStrings(w, got.effort.?.effort.?) else try std.testing.expect(got.effort == null);
     }
 }
 

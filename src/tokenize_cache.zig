@@ -16,6 +16,7 @@
 //!     - tool_choice_instruction
 //!     - enable_thinking flag
 //!     - reasoning_effort string (dsv4 templates render it)
+//!     - chat_template_kwargs (model's, request's merged over them)
 //! Image-bearing messages are intentionally excluded — the vision pipeline
 //! re-injects per-request token positions and any cache hit there would
 //! point at stale token IDs.
@@ -66,6 +67,7 @@ pub const TokenizeCache = struct {
         enable_thinking: bool,
         reasoning_effort: ?[]const u8,
         continue_final: bool,
+        template_kwargs: ?[]const u8,
     ) ?u64 {
         for (messages) |m| if (m.images != null) return null;
         var h = std.hash.Wyhash.init(0xC0DEC0DE);
@@ -104,6 +106,8 @@ pub const TokenizeCache = struct {
         // this the two collide in the cache and one of them is served the
         // other's tokens.
         h.update(if (continue_final) "continue=on" else "continue=off");
+        h.update("\x1e");
+        if (template_kwargs) |k| h.update(k) else h.update("(no-kwargs)");
         return h.final();
     }
 
@@ -174,9 +178,9 @@ test "TokenizeCache key stability" {
     const m3 = [_]chat_mod.Message{
         .{ .role = "user", .content = "hello world!" }, // different content
     };
-    const k1 = TokenizeCache.keyFor(&m1, null, null, false, null, false).?;
-    const k2 = TokenizeCache.keyFor(&m2, null, null, false, null, false).?;
-    const k3 = TokenizeCache.keyFor(&m3, null, null, false, null, false).?;
+    const k1 = TokenizeCache.keyFor(&m1, null, null, false, null, false, null).?;
+    const k2 = TokenizeCache.keyFor(&m2, null, null, false, null, false, null).?;
+    const k3 = TokenizeCache.keyFor(&m3, null, null, false, null, false, null).?;
     try std.testing.expectEqual(k1, k2);
     try std.testing.expect(k1 != k3);
     _ = allocator;
@@ -192,8 +196,8 @@ test "TokenizeCache key distinguishes assistant reasoning_content" {
     const m2 = [_]chat_mod.Message{
         .{ .role = "assistant", .content = "4", .reasoning_content = "two plus two is four" },
     };
-    const k1 = TokenizeCache.keyFor(&m1, null, null, true, null, false).?;
-    const k2 = TokenizeCache.keyFor(&m2, null, null, true, null, false).?;
+    const k1 = TokenizeCache.keyFor(&m1, null, null, true, null, false, null).?;
+    const k2 = TokenizeCache.keyFor(&m2, null, null, true, null, false, null).?;
     try std.testing.expect(k1 != k2);
 }
 
@@ -204,9 +208,9 @@ test "TokenizeCache key distinguishes reasoning_effort" {
     const m = [_]chat_mod.Message{
         .{ .role = "user", .content = "prove it rigorously" },
     };
-    const k_default = TokenizeCache.keyFor(&m, null, null, true, null, false).?;
-    const k_high = TokenizeCache.keyFor(&m, null, null, true, "high", false).?;
-    const k_max = TokenizeCache.keyFor(&m, null, null, true, "max", false).?;
+    const k_default = TokenizeCache.keyFor(&m, null, null, true, null, false, null).?;
+    const k_high = TokenizeCache.keyFor(&m, null, null, true, "high", false, null).?;
+    const k_max = TokenizeCache.keyFor(&m, null, null, true, "max", false, null).?;
     try std.testing.expect(k_default != k_high);
     try std.testing.expect(k_high != k_max);
 }
@@ -217,7 +221,7 @@ test "TokenizeCache images null key" {
             .{ .pixels = "", .width = 8, .height = 8 },
         } },
     };
-    try std.testing.expect(TokenizeCache.keyFor(&m_img, null, null, false, null, false) == null);
+    try std.testing.expect(TokenizeCache.keyFor(&m_img, null, null, false, null, false, null) == null);
 }
 
 test "keyFor: a continuation does not share a key with the same messages as history" {
@@ -228,9 +232,16 @@ test "keyFor: a continuation does not share a key with the same messages as hist
         .{ .role = "user", .content = "count to three" },
         .{ .role = "assistant", .content = "one, two," },
     };
-    const plain = TokenizeCache.keyFor(&m, null, null, true, null, false).?;
-    const cont = TokenizeCache.keyFor(&m, null, null, true, null, true).?;
+    const plain = TokenizeCache.keyFor(&m, null, null, true, null, false, null).?;
+    const cont = TokenizeCache.keyFor(&m, null, null, true, null, true, null).?;
     try std.testing.expect(plain != cont);
+}
+
+test "keyFor: template kwargs are part of the key" {
+    const m = [_]chat_mod.Message{.{ .role = "user", .content = "hi" }};
+    const none = TokenizeCache.keyFor(&m, null, null, true, null, false, null).?;
+    const kw = TokenizeCache.keyFor(&m, null, null, true, null, false, "{\"preserve_thinking\":true}").?;
+    try std.testing.expect(none != kw);
 }
 
 test "TokenizeCache get/put + LRU eviction" {

@@ -3,6 +3,10 @@
 ## v26.9.6-dev
 
 ### Changes
+- "Reasoning replay loop": Qwen3.8 no longer carries every earlier turn's thinking in the prompt. Long agent sessions stop going in circles and use about half the context. The cost is a short pause each time you send a new instruction (a few seconds early on, ~15s around 100k tokens) while the model re-reads the last task without its old thinking; tool rounds in between are unaffected. Set chat_template_kwargs: {"preserve_thinking": true} in Model Settings to get the old behaviour back.
+- `/v1/chat/completions` reads a request's `chat_template_kwargs` (vLLM style): `{"enable_thinking": false}` there now turns thinking off.
+- Images in agent sessions stay where they were sent: models loaded from the app placed every image at the end of the prompt, so the model thought it was re-sent each turn (LFM2-VL image markers were missing on that path too).
+- opencode and opencode2 launchers now turn thinking on (medium by default, with none/low/medium/high variants).
 - The app is now MLX-Serve.app and the download is MLX-Serve.dmg. Settings carry over; an app updated in place from 26.9.5 keeps its old folder name until the next update renames it.
 
 ## v26.9.5 — Bonsai - Qwen-Image 2.1 - Concurrency & Speed

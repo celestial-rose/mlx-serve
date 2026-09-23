@@ -1250,6 +1250,38 @@ pub const ModelConfig = struct {
         return self.user_turn_marker_ids[0..self.user_turn_marker_len];
     }
 
+    /// Everything a load derives from the tokenizer; both load paths call it.
+    pub fn applyTokenizer(
+        self: *ModelConfig,
+        allocator: std.mem.Allocator,
+        tok: *const tokenizer_mod.Tokenizer,
+        eos_token: ?[]const u8,
+        chat_template: []const u8,
+    ) !void {
+        // Always merge the chat terminator, even when config.json names an EOS:
+        // Qwen2.5-Coder's config says <|endoftext|> but turns end on <|im_end|>.
+        if (eos_token) |eos_str| {
+            if (tok.special_tokens.get(eos_str)) |eos_id| {
+                if (!self.isEosToken(eos_id)) {
+                    self.addEosToken(eos_id);
+                    log.info("EOS token from tokenizer: {s} (id={d})\n", .{ eos_str, eos_id });
+                }
+            }
+        }
+        if (tok.special_tokens.get("<|endoftext|>")) |eot_id| {
+            if (!self.isEosToken(eot_id)) self.addEosToken(eot_id);
+        }
+        // Id 0 can be produced spuriously under long/confusing prompts.
+        if (tok.special_tokens.get("<pad>")) |pad_id| {
+            if (pad_id > 0 and !self.isEosToken(pad_id)) {
+                self.addEosToken(pad_id);
+                log.info("Added <pad> as stop token (id={d})\n", .{pad_id});
+            }
+        }
+        try self.populateUserTurnMarker(allocator, tok, chat_template);
+        self.populateLfm2ImageTokens(tok);
+    }
+
     /// Encode the architecture-appropriate user-turn prefix and store the IDs
     /// on the config. Selects the prefix by matching marker tokens that appear
     /// in `chat_template`, so a model that ships an unusual template still
