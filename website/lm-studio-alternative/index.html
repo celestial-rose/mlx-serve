@@ -41,7 +41,7 @@
       {
         "@type": "Question",
         "name": "Can I switch from LM Studio without re-downloading my models?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Yes. MLX Core auto-discovers LM Studio's existing model folder via ~/.lmstudio/settings.json, so everything already on disk shows up in the model picker immediately — MLX and GGUF alike." }
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. MLX-Serve auto-discovers LM Studio's existing model folder via ~/.lmstudio/settings.json, so everything already on disk shows up in the model picker immediately — MLX and GGUF alike." }
       },
       {
         "@type": "Question",
@@ -67,7 +67,7 @@
 
   <nav>
     <a href="../" class="nav-logo">
-      <img src="../appiconb.png" alt="MLX Core" class="nav-logo-img">
+      <img src="../appiconb.png" alt="MLX-Serve" class="nav-logo-img">
       <span>mlx-serve</span>
       <span class="nav-ver"></span>
     </a>
@@ -80,6 +80,7 @@
           <li><a href="../#performance">Performance</a></li>
           <li><a href="../#features">Features</a></li>
           <li><a href="../#faq">FAQ</a></li>
+          <li><a href="../blog/">Blog</a></li>
         </ul>
       </li>
       <li class="nav-sub hide-mobile">
@@ -104,7 +105,7 @@
       <li><a href="../cli/" class="hide-mobile">CLI</a></li>
       <li><a href="../llm-tier-list/" class="hide-mobile">Tier list</a></li>
       <li><a href="https://github.com/ddalcu/mlx-serve" class="nav-github" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a></li>
-      <li><a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLXCore.dmg" class="nav-dl nav-dl-desktop">Download</a></li>
+      <li><a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLX-Serve.dmg" class="nav-dl nav-dl-desktop">Download</a></li>
       <li><a href="https://apps.apple.com/us/app/mlx-chat-local-ai/id6787603518" class="nav-appstore" target="_blank" rel="noopener"><img src="../assets/appstore.svg" alt="Download on the App Store" width="120" height="40"></a></li>
     </ul>
     <label for="nav-toggle" class="nav-burger" aria-label="Menu"><span></span><span></span><span></span></label>
@@ -116,7 +117,7 @@
     <h1>The LM Studio alternative<br>that wins <span class="grad">on the same file.</span></h1>
     <p class="hero-f-sub">Identical weights, identical Mac, identical prompts, shipping defaults on both sides — mlx-serve decodes <b>+26% faster (geomean)</b> with <b>+36% prefill</b> on MLX models. Native menu-bar app, MIT license, no Electron, no Python.</p>
     <div class="hero-ctas">
-      <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLXCore.dmg" class="btn btn-primary">
+      <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLX-Serve.dmg" class="btn btn-primary">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Try it — keeps your models
       </a>
@@ -182,7 +183,7 @@
       <div class="split-copy reveal">
         <span class="split-kicker">Migration</span>
         <h3>Switching takes one download — yours is the only one you skip</h3>
-        <p>MLX Core reads LM Studio's own <code>~/.lmstudio/settings.json</code> and auto-discovers your existing model folder, so <b>everything you've already downloaded shows up in the picker immediately</b> — MLX and GGUF alike. Your OpenAI-compatible clients keep working too: same wire protocol, just a different port.</p>
+        <p>MLX-Serve reads LM Studio's own <code>~/.lmstudio/settings.json</code> and auto-discovers your existing model folder, so <b>everything you've already downloaded shows up in the picker immediately</b> — MLX and GGUF alike. Your OpenAI-compatible clients keep working too: same wire protocol, just a different port.</p>
               </div>
       <div class="split-visual reveal">
         <ul class="ticks">
@@ -207,7 +208,7 @@
       </details>
       <details class="faq-item">
         <summary>Do I have to re-download my models?</summary>
-        <p>No. MLX Core auto-discovers LM Studio's model folder via <code>~/.lmstudio/settings.json</code> — everything on disk appears in the picker. A custom-folder picker covers models stored anywhere else.</p>
+        <p>No. MLX-Serve auto-discovers LM Studio's model folder via <code>~/.lmstudio/settings.json</code> — everything on disk appears in the picker. A custom-folder picker covers models stored anywhere else.</p>
       </details>
       <details class="faq-item">
         <summary>What does it add beyond speed?</summary>
@@ -239,9 +240,9 @@
   <section class="section" style="padding-top: 0;">
     <div class="cta-band reveal">
       <h2>Same models. Faster engine.</h2>
-      <p>Download MLX Core — it finds your LM Studio models on first launch, so the switch costs you nothing but the download.</p>
+      <p>Download MLX-Serve — it finds your LM Studio models on first launch, so the switch costs you nothing but the download.</p>
       <div class="hero-ctas">
-        <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLXCore.dmg" class="btn btn-primary">Download for Mac</a>
+        <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLX-Serve.dmg" class="btn btn-primary">Download for Mac</a>
         <a href="https://github.com/ddalcu/mlx-serve" class="btn btn-secondary" target="_blank" rel="noopener">View on GitHub</a>
       </div>
     </div>

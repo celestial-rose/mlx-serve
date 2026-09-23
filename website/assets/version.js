@@ -33,3 +33,17 @@
     })
     .catch(function () {});
 })();
+
+// In the burger menu a submenu stays folded until its trigger is tapped.
+(function () {
+  var burger = document.getElementById('nav-toggle');
+  if (!burger) return;
+  document.querySelectorAll('.nav-sub-trigger').forEach(function (t) {
+    t.addEventListener('click', function (e) {
+      if (!burger.checked) return;
+      e.preventDefault();
+      e.stopPropagation();
+      t.setAttribute('aria-expanded', t.parentElement.classList.toggle('open'));
+    });
+  });
+})();

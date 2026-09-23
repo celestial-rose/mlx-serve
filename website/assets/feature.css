@@ -442,13 +442,14 @@ footer { padding: 44px 24px; text-align: center; border-top: 0.5px solid var(--b
   .nav-toggle-input:checked ~ .nav-links li { width: 100%; }
   .nav-toggle-input:checked ~ .nav-links .hide-mobile { display: block; padding: 11px 0; font-size: 15px; }
   .nav-toggle-input:checked ~ .nav-links .nav-appstore { margin-top: 6px; }
-  /* inside the burger menu the submenu is a plain indented list */
-  .nav-toggle-input:checked ~ .nav-links .nav-sub-trigger { pointer-events: none; }
-  .nav-toggle-input:checked ~ .nav-links .nav-sub-trigger svg { display: none; }
+  /* inside the burger menu a submenu is a folded indented list; tapping its trigger opens it */
+  .nav-toggle-input:checked ~ .nav-links .nav-sub-trigger svg { width: 11px; height: 7px; transition: transform 0.2s ease; }
+  .nav-toggle-input:checked ~ .nav-links .nav-sub.open .nav-sub-trigger svg { transform: rotate(180deg); }
   .nav-toggle-input:checked ~ .nav-links .nav-submenu {
-    display: block; position: static; margin: 0 0 0 4px; padding: 0 0 4px 14px; min-width: 0;
+    display: none; position: static; margin: 0 0 0 4px; padding: 0 0 4px 14px; min-width: 0;
     background: none; border: 0; border-left: 1px solid var(--border); box-shadow: none;
   }
+  .nav-toggle-input:checked ~ .nav-links .nav-sub.open .nav-submenu { display: block; }
   .nav-toggle-input:checked ~ .nav-links .nav-submenu a { padding: 9px 0 9px 10px; font-size: 15px; }
   .nav-toggle-input:checked ~ .nav-links .nav-submenu-wide { column-count: 1; }
   .nav-toggle-input:checked ~ .nav-burger span:nth-child(1) { transform: translateY(5.5px) rotate(45deg); }

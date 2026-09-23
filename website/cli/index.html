@@ -11,7 +11,7 @@
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://mlxserve.com/cli/">
   <meta property="og:title" content="mlx-serve CLI — one command from zero to chatting">
-  <meta property="og:description" content="mlx-serve run gemma4 downloads, serves, and chats. Full flag reference for the server that powers MLX Core.">
+  <meta property="og:description" content="mlx-serve run gemma4 downloads, serves, and chats. Full flag reference for the server that powers the MLX-Serve app.">
   <meta property="og:site_name" content="mlx-serve">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="mlx-serve CLI reference">
@@ -60,7 +60,7 @@
 
   <nav>
     <a href="../" class="nav-logo">
-      <img src="../appiconb.png" alt="MLX Core" class="nav-logo-img">
+      <img src="../appiconb.png" alt="MLX-Serve" class="nav-logo-img">
       <span>mlx-serve</span>
       <span class="nav-ver"></span>
     </a>
@@ -73,6 +73,7 @@
           <li><a href="../#performance">Performance</a></li>
           <li><a href="../#features">Features</a></li>
           <li><a href="../#faq">FAQ</a></li>
+          <li><a href="../blog/">Blog</a></li>
         </ul>
       </li>
       <li class="nav-sub hide-mobile">
@@ -98,7 +99,7 @@
       <li><a href="../llm-tier-list/" class="hide-mobile">Tier list</a></li>
       <li><a href="../benchmarks/" class="hide-mobile">Benchmarks</a></li>
       <li><a href="https://github.com/ddalcu/mlx-serve" class="nav-github" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a></li>
-      <li><a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLXCore.dmg" class="nav-dl nav-dl-desktop">Download</a></li>
+      <li><a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLX-Serve.dmg" class="nav-dl nav-dl-desktop">Download</a></li>
       <li><a href="https://apps.apple.com/us/app/mlx-chat-local-ai/id6787603518" class="nav-appstore" target="_blank" rel="noopener"><img src="../assets/appstore.svg" alt="Download on the App Store" width="120" height="40"></a></li>
     </ul>
     <label for="nav-toggle" class="nav-burger" aria-label="Menu"><span></span><span></span><span></span></label>
@@ -108,7 +109,7 @@
     <div class="hero-f-glow"><span class="g1"></span><span class="g2"></span></div>
     <div class="crumbs"><a href="../">mlx-serve</a><span class="sep">/</span><span class="here">CLI reference</span></div>
     <h1>One command from zero<br><span class="grad">to chatting.</span></h1>
-    <p class="hero-f-sub"><code>mlx-serve run gemma4</code> downloads the model, starts the server, and drops you into a chat — Ollama-style. The same binary powers the MLX Core app; everything the app does over HTTP, you can drive from the terminal.</p>
+    <p class="hero-f-sub"><code>mlx-serve run gemma4</code> downloads the model, starts the server, and drops you into a chat — Ollama-style. The same binary powers the MLX-Serve app; everything the app does over HTTP, you can drive from the terminal.</p>
     <div class="hero-f-meta">
       <span><b>run · pull · list · serve</b></span>
       <span>Default port <b>11234</b></span>
@@ -129,7 +130,7 @@
     <p>Three ways to get the <code>mlx-serve</code> command:</p>
     <table class="flag-table">
       <tr><th>Method</th><th>How</th></tr>
-      <tr><td><b>From the app</b></td><td>The <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLXCore.dmg">MLX Core</a> welcome screen has a one-click <b>Install</b> button that puts <code>mlx-serve</code> on your PATH — into <code>~/.local/bin</code> or <code>~/bin</code> if you have one (no password), else <code>/usr/local/bin</code> after a single admin prompt. Never touches your shell config. New in v26.7.2.</td></tr>
+      <tr><td><b>From the app</b></td><td>The <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLX-Serve.dmg">MLX-Serve</a> welcome screen has a one-click <b>Install</b> button that puts <code>mlx-serve</code> on your PATH — into <code>~/.local/bin</code> or <code>~/bin</code> if you have one (no password), else <code>/usr/local/bin</code> after a single admin prompt. Never touches your shell config. New in v26.7.2.</td></tr>
       <tr><td><b>Homebrew</b></td><td><code>brew tap ddalcu/mlx-serve https://github.com/ddalcu/mlx-serve &amp;&amp; brew install mlx-serve</code></td></tr>
       <tr><td><b>From source</b></td><td><code>zig build -Doptimize=ReleaseFast</code> (needs <code>brew install mlx-c webp</code>).</td></tr>
     </table>
@@ -245,7 +246,7 @@ mlx-serve --serve --model-dir ~/models --port 11234</pre></div>
       <h2>Two commands from an empty Mac.</h2>
       <p><code>brew install mlx-serve</code> · <code>mlx-serve run gemma4</code> — or take the app and get the CLI from its welcome screen.</p>
       <div class="hero-ctas">
-        <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLXCore.dmg" class="btn btn-primary">Download for Mac</a>
+        <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLX-Serve.dmg" class="btn btn-primary">Download for Mac</a>
         <a href="../api/" class="btn btn-secondary">API documentation</a>
       </div>
     </div>

@@ -28,7 +28,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "mlx-serve",
-    "alternateName": ["MLX Core", "mlx serve"],
+    "alternateName": ["MLX-Serve", "mlx serve", "MLX Core"],
     "applicationCategory": "DeveloperApplication",
     "applicationSubCategory": "AI Inference Server",
     "operatingSystem": "macOS 26+ (Apple Silicon)",
@@ -109,7 +109,7 @@
         "name": "Does mlx-serve work with Claude Code?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Yes — natively. mlx-serve implements Anthropic's /v1/messages endpoint including streaming, tool calling, and extended thinking. Point Claude Code at it with ANTHROPIC_BASE_URL=http://localhost:11234. The MLX Core app ships a one-click Launch Claude Code button that wires up the env vars for you."
+          "text": "Yes — natively. mlx-serve implements Anthropic's /v1/messages endpoint including streaming, tool calling, and extended thinking. Point Claude Code at it with ANTHROPIC_BASE_URL=http://localhost:11234. The MLX-Serve app ships a one-click Launch Claude Code button that wires up the env vars for you."
         }
       },
       {
@@ -125,7 +125,7 @@
         "name": "Can mlx-serve run DeepSeek V4 Flash locally on a Mac?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Yes, on 96 GB+ Apple Silicon Macs. Open the MLX Core Model Browser, pick DeepSeek-V4-Flash, hit Download — the server routes the GGUF through the embedded antirez/ds4 engine with native Metal kernels, byte-validated against the reference forward. Agent mode and MCP tools work on DSV4 too."
+          "text": "Yes, on 96 GB+ Apple Silicon Macs. Open the MLX-Serve Model Browser, pick DeepSeek-V4-Flash, hit Download — the server routes the GGUF through the embedded antirez/ds4 engine with native Metal kernels, byte-validated against the reference forward. Agent mode and MCP tools work on DSV4 too."
         }
       },
       {
@@ -149,7 +149,7 @@
         "name": "How do I install mlx-serve?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "The easiest way is the MLX Core menu-bar app from the GitHub Releases page (signed and notarized DMG). Or via Homebrew: brew tap ddalcu/mlx-serve https://github.com/ddalcu/mlx-serve && brew install --cask mlx-core. The CLI server alone is brew install mlx-serve."
+          "text": "The easiest way is the MLX-Serve menu-bar app from the GitHub Releases page (signed and notarized DMG). Or via Homebrew: brew tap ddalcu/mlx-serve https://github.com/ddalcu/mlx-serve && brew install --cask mlx-core. The CLI server alone is brew install mlx-serve."
         }
       }
     ]
@@ -1195,13 +1195,14 @@
       .nav-dl-desktop { display: none; }
       .nav-appstore { display: flex; }
       .nav-appstore img { height: 24px; }
-      /* inside the burger menu the submenu is a plain indented list */
-      .nav-toggle-input:checked ~ .nav-links .nav-sub-trigger { pointer-events: none; }
-      .nav-toggle-input:checked ~ .nav-links .nav-sub-trigger svg { display: none; }
+      /* inside the burger menu a submenu is a folded indented list; tapping its trigger opens it */
+      .nav-toggle-input:checked ~ .nav-links .nav-sub-trigger svg { width: 11px; height: 7px; transition: transform 0.2s ease; }
+      .nav-toggle-input:checked ~ .nav-links .nav-sub.open .nav-sub-trigger svg { transform: rotate(180deg); }
       .nav-toggle-input:checked ~ .nav-links .nav-submenu {
-        display: block; position: static; margin: 0 0 0 4px; padding: 0 0 4px 14px; min-width: 0;
+        display: none; position: static; margin: 0 0 0 4px; padding: 0 0 4px 14px; min-width: 0;
         background: none; border: 0; border-left: 1px solid var(--border); box-shadow: none;
       }
+      .nav-toggle-input:checked ~ .nav-links .nav-sub.open .nav-submenu { display: block; }
       .nav-toggle-input:checked ~ .nav-links .nav-submenu a { padding: 9px 0 9px 10px; font-size: 15px; }
       .nav-toggle-input:checked ~ .nav-links .nav-submenu-wide { column-count: 1; }
       .nav-toggle-input:checked ~ .nav-links {
@@ -1246,7 +1247,7 @@
   <!-- NAV -->
   <nav>
     <a href="#" class="nav-logo">
-      <img src="appiconb.png" alt="MLX Core" class="nav-logo-img">
+      <img src="appiconb.png" alt="MLX-Serve" class="nav-logo-img">
       <span>mlx-serve</span>
       <span class="nav-ver"></span>
     </a>
@@ -1259,6 +1260,7 @@
           <li><a href="#performance">Performance</a></li>
           <li><a href="#features">Features</a></li>
           <li><a href="#faq">FAQ</a></li>
+          <li><a href="blog/">Blog</a></li>
         </ul>
       </li>
       <li class="nav-sub hide-mobile">
@@ -1288,7 +1290,7 @@
           <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         </a>
       </li>
-      <li><a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLXCore.dmg" class="nav-dl nav-dl-desktop">Download</a></li>
+      <li><a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLX-Serve.dmg" class="nav-dl nav-dl-desktop">Download</a></li>
       <li><a href="https://apps.apple.com/us/app/mlx-chat-local-ai/id6787603518" class="nav-appstore" target="_blank" rel="noopener"><img src="assets/appstore.svg" alt="Download on the App Store" width="120" height="40"></a></li>
     </ul>
     <label for="nav-toggle" class="nav-burger" aria-label="Menu"><span></span><span></span><span></span></label>
@@ -1301,7 +1303,7 @@
     <h1>A private AI that<br>lives on your <span class="grad">Mac</span></h1>
     <p class="hero-sub">Chat with it, ask it about your own documents, make images, music, video and 3D, and let it run errands on your computer — <strong>free, open source, and fully offline</strong>. It runs every major open model, faster than LM&nbsp;Studio, and nothing you type ever leaves the machine.</p>
     <div class="hero-ctas">
-      <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLXCore.dmg" class="btn btn-primary">
+      <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLX-Serve.dmg" class="btn btn-primary">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Download for Mac
       </a>
@@ -1320,7 +1322,7 @@
   <!-- SCREENSHOT -->
   <section class="screenshot-section">
     <div class="screenshot-wrap">
-      <img src="screenshots/ds4.jpg" alt="MLX Core app — Cat with Deepseek, Use Voice Mode, Generate Media" loading="lazy">
+      <img src="screenshots/ds4.jpg" alt="MLX-Serve app — Cat with Deepseek, Use Voice Mode, Generate Media" loading="lazy">
     </div>
   </section>
 
@@ -1673,7 +1675,7 @@
     <div class="section-header reveal">
       <div class="section-label">For developers</div>
       <h2 class="section-title">Faster than LM Studio.<br>Every model.</h2>
-      <p class="section-desc">Under the hood, MLX Core is <b>mlx-serve</b> — a native Zig inference server for Apple Silicon with OpenAI- and Anthropic-compatible APIs. Identical 4-bit MLX weights, same machine, same prompts: it wins every cell, and speculative decoding pushes the lead further where it counts. <a href="lm-studio-alternative/" style="color:var(--blue);text-decoration:none;">Full LM Studio comparison →</a></p>
+      <p class="section-desc">Under the hood, the MLX-Serve app runs <b>mlx-serve</b> — a native Zig inference server for Apple Silicon with OpenAI- and Anthropic-compatible APIs. Identical 4-bit MLX weights, same machine, same prompts: it wins every cell, and speculative decoding pushes the lead further where it counts. <a href="lm-studio-alternative/" style="color:var(--blue);text-decoration:none;">Full LM Studio comparison →</a></p>
     </div>
 
     <div class="perf-stats reveal">
@@ -1726,9 +1728,9 @@
             <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span><b>Agent mode and MCP tool calling</b> work on DSV4 too — the full toolset is inlined into the prompt.</span></li>
             <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>A <b>single self-contained binary</b> — kernel sources are embedded and staged at first launch.</span></li>
           </ul>
-          <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLXCore.dmg" class="deepseek-cta">
+          <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLX-Serve.dmg" class="deepseek-cta">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Get MLX Core
+            Get MLX-Serve
           </a>
         </div>
         <div class="deepseek-stat reveal">
@@ -1952,7 +1954,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><polyline points="21 3 21 9 15 9"/></svg>
         </div>
         <h3>The app updates itself</h3>
-        <p>MLX Core checks the releases page once a day and shows a banner when a new version ships — one click downloads the notarized build, swaps it in place, and relaunches. Models, chats, and settings untouched. And the welcome screen now installs the <code>mlx-serve</code> command onto your PATH with one click.</p>
+        <p>MLX-Serve checks the releases page once a day and shows a banner when a new version ships — one click downloads the notarized build, swaps it in place, and relaunches. Models, chats, and settings untouched. And the welcome screen now installs the <code>mlx-serve</code> command onto your PATH with one click.</p>
         <a class="card-more" href="cli/">The CLI, documented →</a>
       </div>
       <div class="feature-card reveal">
@@ -1981,10 +1983,10 @@
       <p class="section-desc">Download the app, pick a model, go. Prefer a terminal? Two commands.</p>
     </div>
     <div class="quickstart-wrap reveal">
-      <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLXCore.dmg" class="app-download-card" style="margin: 0 auto 28px;">
-        <img src="appiconb.png" alt="MLX Core" class="app-download-icon">
+      <a href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLX-Serve.dmg" class="app-download-card" style="margin: 0 auto 28px;">
+        <img src="appiconb.png" alt="MLX-Serve" class="app-download-icon">
         <div class="app-download-info">
-          <div class="app-download-name">MLX Core</div>
+          <div class="app-download-name">MLX-Serve</div>
           <div class="app-download-desc">The Mac app — chat, agents, images, video &amp; voice</div>
         </div>
         <div class="app-download-btn">Get</div>
@@ -2183,7 +2185,7 @@
     <div class="faq-wrap reveal">
       <details class="faq-item">
         <summary>Do I need to be technical to use this?</summary>
-        <p>No. MLX Core is a normal menu-bar app: install it, click to download the recommended model — it's sized to your Mac — and start chatting. The advanced bits (agent tools, coding assistants, the developer API) stay out of the way until you go looking for them. There's a friendly <a href="onboarding/">5-minute getting-started tour</a> when you're ready.</p>
+        <p>No. MLX-Serve is a normal menu-bar app: install it, click to download the recommended model — it's sized to your Mac — and start chatting. The advanced bits (agent tools, coding assistants, the developer API) stay out of the way until you go looking for them. There's a friendly <a href="onboarding/">5-minute getting-started tour</a> when you're ready.</p>
       </details>
       <details class="faq-item">
         <summary>Is it really free?</summary>
@@ -2207,7 +2209,7 @@
       </details>
       <details class="faq-item">
         <summary>Does mlx-serve work with Claude Code?</summary>
-        <p>Yes — natively. mlx-serve implements Anthropic's <code>/v1/messages</code> endpoint including streaming, tool calling, and extended thinking. Point Claude Code at it with <code>ANTHROPIC_BASE_URL=http://localhost:11234</code>. The MLX Core app ships a one-click <b>Launch Claude Code</b> button that wires up the env vars for you.</p>
+        <p>Yes — natively. mlx-serve implements Anthropic's <code>/v1/messages</code> endpoint including streaming, tool calling, and extended thinking. Point Claude Code at it with <code>ANTHROPIC_BASE_URL=http://localhost:11234</code>. The MLX-Serve app ships a one-click <b>Launch Claude Code</b> button that wires up the env vars for you.</p>
       </details>
       <details class="faq-item">
         <summary>What about the OpenAI SDK, Continue, Cursor, Open WebUI?</summary>
@@ -2215,7 +2217,7 @@
       </details>
       <details class="faq-item">
         <summary>Can mlx-serve run DeepSeek V4 Flash locally?</summary>
-        <p>Yes, on 96 GB+ Apple Silicon Macs. Open the MLX Core Model Browser, pick DeepSeek-V4-Flash, hit Download — the server routes the GGUF through the embedded ds4 engine (native Metal kernels, byte-validated against the reference forward). Agent mode and MCP tools work on DSV4 too.</p>
+        <p>Yes, on 96 GB+ Apple Silicon Macs. Open the MLX-Serve Model Browser, pick DeepSeek-V4-Flash, hit Download — the server routes the GGUF through the embedded ds4 engine (native Metal kernels, byte-validated against the reference forward). Agent mode and MCP tools work on DSV4 too.</p>
       </details>
       <details class="faq-item">
         <summary>What models are supported?</summary>
@@ -2223,7 +2225,7 @@
       </details>
       <details class="faq-item">
         <summary>Does it support tools / function calling?</summary>
-        <p>Yes, on both API surfaces. The server detects tool-call patterns across architectures (Hermes XML, Gemma 4 <code>&lt;|tool_call&gt;</code>, raw JSON, ChatML), repairs common Qwen 3.5/3.6 escape quirks, and emits OpenAI-style <code>tool_calls</code> deltas in the SSE stream. The MLX Core app ships <b>10 built-in tools</b> (shell, file I/O, search, browse, web search, memory) and connects to MCP servers from a curated marketplace. Malformed tool-call JSON from small models is <a href="tool-calling/">repaired at the API layer</a>.</p>
+        <p>Yes, on both API surfaces. The server detects tool-call patterns across architectures (Hermes XML, Gemma 4 <code>&lt;|tool_call&gt;</code>, raw JSON, ChatML), repairs common Qwen 3.5/3.6 escape quirks, and emits OpenAI-style <code>tool_calls</code> deltas in the SSE stream. The MLX-Serve app ships <b>10 built-in tools</b> (shell, file I/O, search, browse, web search, memory) and connects to MCP servers from a curated marketplace. Malformed tool-call JSON from small models is <a href="tool-calling/">repaired at the API layer</a>.</p>
       </details>
       <details class="faq-item">
         <summary>How does it stay this small / fast?</summary>
@@ -2243,7 +2245,7 @@
       </details>
       <details class="faq-item">
         <summary>How do I install it?</summary>
-        <p>The easiest way is the <a href="https://github.com/ddalcu/mlx-serve/releases/latest">MLX Core app from GitHub Releases</a> (signed and notarized DMG). Or via Homebrew: <code>brew tap ddalcu/mlx-serve https://github.com/ddalcu/mlx-serve &amp;&amp; brew install --cask mlx-core</code>. CLI server alone: <code>brew install mlx-serve</code>.</p>
+        <p>The easiest way is the <a href="https://github.com/ddalcu/mlx-serve/releases/latest">MLX-Serve app from GitHub Releases</a> (signed and notarized DMG). Or via Homebrew: <code>brew tap ddalcu/mlx-serve https://github.com/ddalcu/mlx-serve &amp;&amp; brew install --cask mlx-core</code>. CLI server alone: <code>brew install mlx-serve</code>.</p>
       </details>
     </div>
     <p style="text-align:center; margin-top: 32px; font-size: 14px; color: var(--text-tertiary);">
@@ -2265,6 +2267,7 @@
       <li><a href="onboarding/">Getting started</a></li>
       <li><a href="api/">API documentation</a></li>
       <li><a href="cli/">CLI reference</a></li>
+      <li><a href="blog/">Blog</a></li>
       <li><a href="claude-code-local/">Claude Code, local</a></li>
       <li><a href="lm-studio-alternative/">LM Studio alternative</a></li>
       <li><a href="ollama-alternative/">Ollama alternative</a></li>

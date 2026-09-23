@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Why mlx-serve is so fast</title>
+<meta name="author" content="David Dalcu">
+<meta name="description" content="mlx-serve 26.9.5 on an M4 Max: Qwen3.6-35B-A3B at 239 tokens a second, a continued chat answered in 56 ms, and four Qwen3.8-27B chats at 119 tokens a second combined, up from 72. Native Zig, no Python, and every trick is about getting more tokens out of each read of the weights.">
+<link rel="icon" href="../../appiconb.png">
+<link rel="canonical" href="https://mlxserve.com/blog/why-mlx-serve-is-fast/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="mlx-serve">
+<meta property="og:title" content="Why mlx-serve is so fast: 239 tokens a second on a Mac, no Python">
+<meta property="og:description" content="Four 27B chats at 119 tok/s combined (was 72), 56 ms to the first token on a continued chat, 8-bit KV as fast as bf16 at 32k. What mlx-serve 26.9.5 does with each read of the weights.">
+<meta property="og:url" content="https://mlxserve.com/blog/why-mlx-serve-is-fast/">
+<meta property="og:image" content="https://mlxserve.com/blog/why-mlx-serve-is-fast/card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Why mlx-serve is so fast: 239 tokens a second on a Mac, no Python">
+<meta name="twitter:description" content="Four 27B chats at 119 tok/s combined (was 72), 56 ms to the first token on a continued chat, 8-bit KV as fast as bf16 at 32k.">
+<meta name="twitter:image" content="https://mlxserve.com/blog/why-mlx-serve-is-fast/card.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Why mlx-serve is so fast: 239 tokens a second on a Mac, no Python",
+  "datePublished": "2026-09-22",
+  "author": { "@type": "Person", "name": "David Dalcu" },
+  "publisher": { "@type": "Organization", "name": "mlx-serve", "url": "https://mlxserve.com/" },
+  "image": "https://mlxserve.com/blog/why-mlx-serve-is-fast/card.png",
+  "mainEntityOfPage": "https://mlxserve.com/blog/why-mlx-serve-is-fast/"
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="../post.css">
+</head>
+<body>
+<div class="top"><div class="top-inner">
+  <a class="brand" href="../../"><img src="../../appiconb.png" alt="" width="28" height="28">mlx-serve <span class="by">blog</span></a>
+  <nav><a href="#results">Results</a><a href="#concurrency">Four chats</a><a href="#how">How it works</a><a href="../">All posts</a><a class="cta" href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLX-Serve.dmg">Download</a></nav>
+</div></div>
+<div class="wrap">
+
+<p class="eyebrow">Engineering · Release 26.9.5</p>
+<h1>Why mlx-serve is so fast: <span class="grad">239 tokens a second</span> on a Mac, no Python</h1>
+<p class="sub">mlx-serve is a native inference server for Apple silicon, written in Zig on top of MLX's C API. One binary, no Python, more than 20 language model architectures. In release 26.9.5 on an M4 Max it decodes Qwen3.6-35B-A3B at 239 tokens a second, answers a continued chat in 56 ms, and runs four Qwen3.8-27B chats at 119 tokens a second combined, up from 72 before this release. On the same Mac it decodes 1.1 to 3.2 times faster than llama.cpp without speculation on either side, and 3.2 times faster on Qwen3.8-27B with MTP on both.</p>
+<div class="byline"><span><b>David Dalcu</b></span><span>22 Sep 2026</span><span>M4 Max · 128 GB</span><span>v26.9.5</span></div>
+
+<div class="stats">
+  <div class="stat"><b>239</b><span>tok/s, one stream</span><small>Qwen3.6-35B-A3B 4-bit with its MTP head. Median of three llmprobe runs</small></div>
+  <div class="stat"><b>119</b><span>tok/s, four chats</span><small>Qwen3.8-27B 4-bit, combined. Was 72. One chat alone: 70</small></div>
+  <div class="stat"><b>56 ms</b><span>to the first token</span><small>Continued chat, Gemma 4 26B-A4B, 1,431 tokens from cache. Cold: 929 ms</small></div>
+  <div class="stat"><b>1.1–3.2×</b><span>faster than llama.cpp</span><small>Decode, same Mac, no speculation on either side. 3.2× on Qwen3.8-27B with MTP on both</small></div>
+</div>
+
+<p>Every number on this page comes from one Mac, an M4 Max with 128 GB. Decoding a token means streaming the model's weights from unified memory through the GPU, and no engine streams them faster than the memory bus allows. So the whole game on Apple silicon is how many tokens you get out of each read. mlx-serve gets more than one in three ways: it guesses ahead and checks the guesses in one pass, it checks several conversations in that same pass, and it never reads a prompt twice if it already has the answer cached. Everything else in the engine exists to make those three cheap.</p>
+
+<figure class="console" id="console">
+  <p class="eyebrow">One read of the weights</p>
+  <h3>More tokens out of every read</h3>
+  <p class="lede">A 27B model at 4 bits is about 15 GB. Reading it once takes tens of milliseconds on an M4 Max, and one token per read tops out near 29 tokens a second in practice. mlx-serve verifies 16 rows per read: four chats, each with the next token plus three guesses.</p>
+  <div class="terms">
+    <div class="term" id="t-plain">
+      <div class="term-bar"><i></i><i></i><i></i><span>plain decode · 1 row per read</span></div>
+      <div class="term-body">
+        <div class="read"><div class="read-fill"></div><span>read weights · 15 GB</span></div>
+        <div class="rows"></div>
+        <div class="streams"></div>
+      </div>
+      <div class="term-status"><span>reads <b class="reads">0</b> · tokens <b class="toks">0</b></span><span><b class="rate">~29</b> tok/s</span></div>
+    </div>
+    <div class="term ours" id="t-ours">
+      <div class="term-bar"><i></i><i></i><i></i><span>mlx-serve · Qwen3.8-27B-4bit · 4 slots, MTP</span></div>
+      <div class="term-body">
+        <div class="read"><div class="read-fill"></div><span>read weights · 15 GB · verify 16 rows</span></div>
+        <div class="rows"></div>
+        <div class="streams"></div>
+      </div>
+      <div class="term-status"><span>reads <b class="reads">0</b> · tokens <b class="toks">0</b></span><span><b class="rate">119</b> tok/s</span></div>
+    </div>
+  </div>
+  <div class="console-foot"><span>same clock on both sides, slowed 10× · click to pause</span><span>tokens out, mlx-serve vs plain <b class="mult" id="mult">…</b></span></div>
+  <figcaption><span class="fig">FIG 1</span>On the left, a plain engine reads the weights and gets one token for one chat, about every 34 ms. On the right, mlx-serve reads them once for a 16-row verify: four chats, each row holding a committed token (t) and three drafts from the model's own multi-token-prediction head (d1 to d3). The model keeps the drafts it agrees with, about 3.2 per chat. A 16-row read costs about three plain reads (roughly 106 ms a round) and keeps about 12.6 tokens. Measured on Qwen3.8-27B 4-bit: plain decode ~29 tok/s, one chat with MTP 70, four chats 119.</figcaption>
+</figure>
+
+<h2 id="results">Results</h2>
+<p>Five models from the release benchmark, one M4 Max, the fastest configuration each ships with, speculation named where it engaged. Decode is llmprobe's own code-completion prompt, warmup discarded, median of three runs. Prefill is a 2k-token prompt. First-token times are a 1.4k-token conversation sent cold, then sent again with one more message.</p>
+
+<figure><div class="card"><div class="card-title"><h3>Decode, one stream</h3><span>tokens / s</span></div><div class="pills"><span><i style="background:#86868b"></i>llama.cpp</span><span><i style="background:linear-gradient(120deg,#0071e3,#00c6fb)"></i>mlx-serve 26.9.5</span></div><div id="c-decode"></div></div>
+<figcaption><span class="fig">FIG 2</span>Grey bars are llama.cpp on the same Mac with a GGUF of the same model: Q4_0 for both Qwen3.8 models, the same size as our packs, and Q4_K_M for the Gemmas and the 35B, a little bigger (method below). The label under each model is mlx-serve's speculation mode. llama.cpp runs MTP only on the 27B: the 35B GGUF ships without its head and llama.cpp has no MTP for Flash-Next yet, so those grey bars run without it.</figcaption></figure>
+
+<figure><div class="card"><div class="card-title"><h3>Time to the first token</h3><span>log scale</span></div><div class="pills"><span><i style="background:#0071e3"></i>warm, from the prefix cache</span><span><i style="background:#d2d2d7"></i>cold</span></div><div id="c-ttft"></div></div>
+<figcaption><span class="fig">FIG 3</span>The continued request carries 1,431 to 1,508 tokens the prefix cache already holds, so only the new message is prefilled. The dense 27B shows it best: 6.8 seconds cold, 202 ms warm, 34× sooner.</figcaption></figure>
+
+<figure><div class="card"><div class="card-title"><h3>Decode by context length</h3><span>tokens / s</span></div><div id="c-ctx"></div></div>
+<figcaption><span class="fig">FIG 4</span>Every model stays above half its short-context speed at 16k. The 35B MoE reads 186 at 8k against 171 at 4k: that is speculation, not noise, drafts landed 3.2 tokens a round on that prompt.</figcaption></figure>
+
+<div class="tbl"><table>
+<thead><tr><th>Model, 4-bit</th><th>Spec</th><th class="n">Decode</th><th class="n">Prefill</th><th class="n">Cold</th><th class="n">Warm</th><th class="n">Sooner</th></tr></thead>
+<tbody>
+<tr><td>Qwen3.6 35B-A3B</td><td>MTP</td><td class="n"><b>239</b></td><td class="n">1,871</td><td class="n">850 ms</td><td class="n">68 ms</td><td class="n"><span class="up">12.5×</span></td></tr>
+<tr><td>Gemma 4 E4B</td><td>PLD</td><td class="n"><b>116</b></td><td class="n">1,467</td><td class="n">990 ms</td><td class="n">53 ms</td><td class="n"><span class="up">18.7×</span></td></tr>
+<tr><td>Gemma 4 26B-A4B</td><td>PLD</td><td class="n"><b>115</b></td><td class="n">1,596</td><td class="n">929 ms</td><td class="n">56 ms</td><td class="n"><span class="up">16.6×</span></td></tr>
+<tr><td>Qwen3.8 Flash-Next*</td><td>MTP</td><td class="n"><b>83</b></td><td class="n">727</td><td class="n">2,127 ms</td><td class="n">145 ms</td><td class="n"><span class="up">14.7×</span></td></tr>
+<tr><td>Qwen3.8 27B</td><td>MTP</td><td class="n"><b>70</b></td><td class="n">257</td><td class="n">6,835 ms</td><td class="n">202 ms</td><td class="n"><span class="up">33.8×</span></td></tr>
+</tbody></table></div>
+<p class="note">Release 26.9.5, Apple M4 Max 128 GB, ReleaseFast, llmprobe <code>--bench-only</code>, medians of three. PLD is prompt lookup, MTP is the model's own multi-token-prediction head. Decode and prefill in tokens per second; cold and warm are the time to the first token for the same 1.4k-token conversation. *Flash-Next is a 125B-A6B mixture of experts in a mixed 4/8-bit pack.</p>
+
+<h2 id="how">How it works</h2>
+<p>mlx-serve is general on purpose: one server runs Gemma, Qwen, Llama, Mistral, DeepSeek, LFM, Nemotron and more, next to image, video, music and speech models. The speed comes from the parts around the math.</p>
+<ul>
+  <li><strong>No Python in the loop.</strong> The server, the scheduler, the tokenizer and the sampler are Zig. One inference thread owns the GPU and feeds it the next step as soon as the last one is queued, so there is no interpreter between a token and the next dispatch.</li>
+  <li><strong>It guesses ahead, exactly.</strong> Four speculation engines: prompt lookup (on by default, any model), the Qwen multi-token-prediction head, DFlash block drafters, and the Gemma 4 assistant drafter. The model verifies every guess in one pass and keeps only what it would have written itself. Equivalence tests against plain decode run every release.</li>
+  <li><strong>It checks several chats in the same pass.</strong> Concurrent requests share one forward. With MTP on, four chats share one 16-row verify instead of taking turns.</li>
+  <li><strong>It remembers conversations.</strong> A prefix cache in RAM, with an optional SSD tier, restores the conversation up to the new message. Hybrid models (Qwen 3.5 to 3.8) keep recurrent-state checkpoints so a restore never re-reads the prompt.</li>
+  <li><strong>Kernels shaped for the verify step.</strong> Stock matrix kernels are tuned for one row or for hundreds. A verify step is 2 to 24 rows, so mlx-serve carries its own Metal kernels for that width, plus fused attention for head size 256, fused recurrent-state decode, and an exact 2-bit path for Bonsai.</li>
+  <li><strong>A memory plan per Mac.</strong> Context, cache and admission are sized from the machine at load. A request that does not fit waits its turn instead of crashing the GPU.</li>
+</ul>
+
+<h2>The line nobody gets under</h2>
+<div class="callout"><p>Qwen3.8-27B at 4 bits is about 15 GB. The M4 Max moves 546 GB a second, so reading it once takes about 28 ms, and one token per read can never beat about 36 tokens a second. Plain decode measures about 29. mlx-serve serves one chat at 70 and four at 119 on the same weights. None of that is a faster read. It is more tokens kept per read: about 2.4 for one chat with MTP, about 12.6 for four.</p></div>
+<p>That is why this post is mostly about speculation and batching. The trunk forward on a 27B is at parity with every other MLX-based engine we have measured; nobody reads 15 GB faster than the bus. What separates engines is what they do with each read.</p>
+
+<h2 id="concurrency">Four chats, one read</h2>
+<p>Before 26.9.5, four MTP chats on the 27B took turns. Each chat ran its own draft and its own verify, so four chats added up to 72 tokens a second, barely more than one. Now the four lanes draft as rows of one head forward and verify together in one 16-row pass, and every lane is drafted to the full width so the pass never runs half empty.</p>
+
+<figure><div class="card"><div class="card-title"><h3>Combined decode, Qwen3.8-27B 4-bit</h3><span>tokens / s</span></div><div class="pills"><span><i style="background:#d2d2d7"></i>earlier mlx-serve</span><span><i style="background:linear-gradient(120deg,#0071e3,#00c6fb)"></i>26.9.5</span></div><div id="c-conc"></div></div>
+<figcaption><span class="fig">FIG 5</span>Greedy, repeated boots per arm. Top: short prompts. Bottom: four chats each 28k tokens deep, warm.</figcaption></figure>
+
+<p>Three changes made it work. A matrix tile that Apple's M5 runs in hardware turned out to run well as plain shader code on the M4, 11.2 TFLOP/s at 8, 16 and 24 rows, so a 16-row verify costs about three plain reads, not sixteen. The draft head now runs once for all four lanes instead of twelve small serial steps. And past 1k tokens of context each chat attends over its own KV cache instead of the engine padding and stacking all four every step, which is the 26 to 64 at 28k.</p>
+
+<figure><div class="card"><div class="card-title"><h3>One four-chat MTP round</h3><span>milliseconds</span></div><div class="pills"><span><i style="background:#1d1d1f"></i>16-row verify</span><span><i style="background:linear-gradient(120deg,#0071e3,#00c6fb)"></i>draft head</span><span><i style="background:#d2d2d7"></i>accept, glue</span></div><div id="c-round"></div></div>
+<figcaption><span class="fig">FIG 6</span>Roughly to scale, from round traces. Before, each lane drafted on its own: twelve small head steps, about 21 ms of a 125 ms round. After, the lanes draft as rows of one head forward and the next round's drafts are dispatched before this one ends. The 16-row verify is now nearly the whole round, which is where it should be.</figcaption></figure>
+
+<h2 id="kv8">8-bit KV, as fast as bf16 at long context</h2>
+<p>An 8-bit KV cache halves the memory a long conversation takes, but reading it used to cost speed: at 32k the 27B decoded at 37 tokens a second with 8-bit KV against 46 with bf16. The packed kernels were spilling registers once a verify step had more than a dozen query rows. The new kernel dequantizes each 32-token page into threadgroup memory and does both attention matmuls with Apple's <code>matmul2d</code> tensor op, straight from our affine cache.</p>
+<figure><div class="card"><div class="card-title"><h3>Qwen3.8-27B, one stream, MTP</h3><span>tokens / s</span></div><div class="pills"><span><i style="background:#d2d2d7"></i>8-bit KV, before</span><span><i style="background:#86868b"></i>bf16 KV</span><span><i style="background:linear-gradient(120deg,#0071e3,#00c6fb)"></i>8-bit KV, 26.9.5</span></div><div id="c-kv8"></div></div>
+<figcaption><span class="fig">FIG 7</span>8-bit KV went from 45 to 55 at 16k and from 37 to 51 at 32k, now ahead of bf16 KV at both. Per layer at 32k the new kernel takes 0.77 ms for a 4-row verify against 0.98 for bf16 attention, and 1.22 against 1.99 at 8 rows.</figcaption></figure>
+
+<h2 id="next">What's next</h2>
+<ul>
+  <li><strong>Long single chats.</strong> The draft readout cost past 8k context is the next lever for one-stream decode.</li>
+  <li><strong>Whole rounds without the host.</strong> Draft, verify and accept in one command buffer, so the CPU is never on the path between two rounds.</li>
+  <li><strong>More chips measured.</strong> The width tables are measured on M1, M1 Pro, M4 and M4 Max. Every other chip still starts from a cold-start guess until it is measured.</li>
+</ul>
+
+<h2>Method</h2>
+<p>Apple M4 Max, 128 GB, macOS 26. mlx-serve 26.9.5, ReleaseFast. Single-stream rows are <code>tests/bench.sh</code>, which runs llmprobe <code>--bench-only</code>: warmup discarded, median of three, each engine at its fastest shipped configuration with the speculative mode named. The earlier columns in Fig 2 come from the same harness in <code>benchmarks.md</code>. Concurrency and 8-bit KV numbers come from our own harness: greedy, one engine per boot, repeated boots per arm, same prompts on both engines; the 8-bit KV runs used a 36 GB GPU memory limit. llmprobe's own four-stream cell on the 27B reads 86, because it includes the four cold prefills. Speculative numbers vary by prompt, so we compare only same-session, same-methodology cells. The llama.cpp comparison is its own session on 22 September: llama.cpp master f46bc30 built with Metal, <code>llama-server -ngl 99 -fa on -c 65536 -np 4 --kv-unified --jinja</code> (plus <code>--spec-type draft-mtp</code> on the MTP row), against mlx-serve 26.9.5. Its Flash-Next cell is the best of two llama.cpp runs, the default one and one with a 32k context and the prompt cache off, because the 100 GB model left the default run short of memory.</p>
+
+<h2 id="try">Try it</h2>
+<p>It speaks the OpenAI, Anthropic and Ollama APIs, so Claude Code, Codex, pi and anything else that talks to those can run on your Mac at these speeds.</p>
+<div class="code"><span class="c"># the app</span>
+brew install --cask mlx-core
+<span class="c"># or just the server</span>
+brew install mlx-serve
+mlx-serve run gemma4
+<span class="c"># point Claude Code at it</span>
+mlx-serve launch claude</div>
+<div class="actions"><a class="btn btn-primary" href="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLX-Serve.dmg">Download for Mac</a><a class="btn btn-secondary" href="https://github.com/ddalcu/mlx-serve">GitHub</a><a class="btn btn-secondary" href="../../benchmarks/">Community benchmarks</a></div>
+
+<footer>
+  <a href="../../">mlxserve.com</a>
+  <a href="../">Blog</a>
+  <a href="https://github.com/ddalcu/mlx-serve">GitHub</a>
+  <a href="https://github.com/ddalcu/mlx-serve/blob/main/CHANGELOG.md">Changelog</a>
+  <span>MIT License · built for Apple silicon</span>
+</footer>
+</div>
+
+<script>
+(function(){
+  var W = 700, OURS = 'url(#g-ours)', BEFORE = '#d2d2d7', REF = '#86868b', DARK = '#1d1d1f';
+  var DEFS = '<defs><linearGradient id="g-ours" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0071e3"/><stop offset="1" stop-color="#00c6fb"/></linearGradient></defs>';
+  function svg(label, H, body){return '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + label + '">' + DEFS + body + '</svg>';}
+  function t(x, y, s, a){return '<text x="' + x + '" y="' + y + '" fill="currentColor"' + (a || '') + '>' + s + '</text>';}
+  function vgrid(sx, ticks, y0, y1, fmt){
+    return ticks.map(function(v){var x = sx(v); return '<line x1="' + x + '" x2="' + x + '" y1="' + y0 + '" y2="' + y1 + '" stroke="currentColor" stroke-opacity=".07"/>' + t(x, y1 + 18, fmt ? fmt(v) : v, ' text-anchor="middle" fill-opacity=".45"');}).join('');
+  }
+  function bar(x, y, w, h, fill){return '<rect x="' + x + '" y="' + y + '" width="' + Math.max(0, w) + '" height="' + h + '" rx="' + (h / 2) + '" fill="' + fill + '"/>';}
+
+  (function(){
+    var rows = [['Qwen3.6 35B-A3B', 'MTP', 86.3, 239], ['Gemma 4 E4B', 'PLD', 94.7, 116], ['Gemma 4 26B-A4B', 'PLD', 104.8, 115], ['Qwen3.8 Flash-Next', 'MTP', 17.4, 83], ['Qwen3.8 27B', 'MTP', 23.1, 70]];
+    var padL = 190, padR = 100, rowH = 44, H = rowH * rows.length + 24, max = 260;
+    var sx = function(v){return padL + (W - padL - padR) * v / max;};
+    var b = vgrid(sx, [0, 50, 100, 150, 200, 250], 0, H - 24);
+    rows.forEach(function(r, i){
+      var y = i * rowH + 8;
+      b += t(padL - 12, y + 12, r[0], ' text-anchor="end" font-weight="600"') + t(padL - 12, y + 27, r[1], ' text-anchor="end" fill-opacity=".45"');
+      b += bar(padL, y, sx(r[2]) - padL, 9, REF) + t(sx(r[2]) + 8, y + 9, r[2], ' fill-opacity=".6"') + bar(padL, y + 13, sx(r[3]) - padL, 14, OURS);
+      b += t(sx(r[3]) + 8, y + 25, r[3] + ' <tspan dx="6" fill="#0071e3" font-size="17" font-weight="800">' + (r[3] / r[2]).toFixed(1) + '×</tspan>', ' font-weight="700"');
+    });
+    document.getElementById('c-decode').innerHTML = svg('Decode per model, llama.cpp vs mlx-serve 26.9.5', H, b);
+  })();
+
+
+  (function(){
+    var rows = [['Qwen3.8 27B', 6835, 202], ['Gemma 4 E4B', 990, 53], ['Gemma 4 26B-A4B', 929, 56], ['Qwen3.8 Flash-Next', 2127, 145], ['Qwen3.6 35B-A3B', 850, 68]];
+    var padL = 150, padR = 96, rowH = 34, H = rowH * rows.length + 26, lo = Math.log10(30), hi = Math.log10(10000);
+    var sx = function(v){return padL + (W - padL - padR) * (Math.log10(v) - lo) / (hi - lo);};
+    var b = vgrid(sx, [30, 100, 300, 1000, 3000, 10000], 0, H - 26, function(v){return v >= 1000 ? v / 1000 + ' s' : v + ' ms';});
+    rows.forEach(function(r, i){
+      var y = i * rowH + rowH / 2, xc = sx(r[1]), xw = sx(r[2]);
+      b += t(padL - 12, y + 4, r[0], ' text-anchor="end" font-weight="600"');
+      b += '<line x1="' + xw + '" x2="' + xc + '" y1="' + y + '" y2="' + y + '" stroke="#0071e3" stroke-width="4" stroke-linecap="round" stroke-opacity=".18"/>';
+      b += '<circle cx="' + xc + '" cy="' + y + '" r="5" fill="' + BEFORE + '"/><circle cx="' + xw + '" cy="' + y + '" r="7" fill="#0071e3" stroke="#fff" stroke-width="2"/>';
+      b += t(xw - 12, y + 4, r[2], ' text-anchor="end" font-weight="700"') + t(xc + 10, y + 4, r[1].toLocaleString(), ' fill-opacity=".5"');
+      b += '<rect x="' + (W - 54) + '" y="' + (y - 10) + '" width="54" height="20" rx="10" fill="#0071e3" fill-opacity=".1"/>' + t(W - 27, y + 4, (r[1] / r[2]).toFixed(1) + '×', ' text-anchor="middle" fill="#0071e3" font-weight="700"');
+    });
+    document.getElementById('c-ttft').innerHTML = svg('Cold vs warm time to first token', H, b);
+  })();
+
+  (function(){
+    var xs = ['512', '4k', '8k', '16k'];
+    var series = [['Qwen3.6 35B-A3B', '#0071e3', [214.5, 170.7, 185.6, 142.7]], ['Gemma 4 E4B', '#00c6fb', [112.4, 105.9, 99.2, 85.2]], ['Gemma 4 26B-A4B', '#5e5ce6', [114, 101.6, 96.8, 78]], ['Qwen3.8 Flash-Next', '#d97706', [75.7, 71.5, 65.1, 63]], ['Qwen3.8 27B', DARK, [61.7, 56.5, 58.6, 49.9]]];
+    var padL = 40, padR = 190, padT = 10, padB = 30, H = 290, max = 250;
+    var sx = function(i){return padL + (W - padL - padR) * i / 3;};
+    var sy = function(v){return padT + (H - padT - padB) * (1 - v / max);};
+    var b = '';
+    [0, 50, 100, 150, 200, 250].forEach(function(v){b += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + sy(v) + '" y2="' + sy(v) + '" stroke="currentColor" stroke-opacity=".07"/>' + t(padL - 8, sy(v) + 4, v, ' text-anchor="end" fill-opacity=".45"');});
+    xs.forEach(function(l, i){b += t(sx(i), H - 8, l, ' text-anchor="middle" fill-opacity=".45"');});
+    var ends = series.map(function(s){return sy(s[2][3]);});
+    for (var k = 1; k < ends.length; k++) if (ends[k] - ends[k - 1] < 15) ends[k] = ends[k - 1] + 15;
+    series.forEach(function(s, j){
+      var pts = s[2].map(function(v, i){return sx(i) + ',' + sy(v);}).join(' ');
+      b += '<polyline points="' + pts + '" fill="none" stroke="' + s[1] + '" stroke-width="2.5" stroke-linejoin="round"/>';
+      s[2].forEach(function(v, i){b += '<circle cx="' + sx(i) + '" cy="' + sy(v) + '" r="4" fill="#fff" stroke="' + s[1] + '" stroke-width="2"/>';});
+      b += t(W - padR + 14, ends[j] + 4, s[0] + ' <tspan font-weight="700">' + Math.round(s[2][3]) + '</tspan>', ' fill="' + s[1] + '"');
+    });
+    document.getElementById('c-ctx').innerHTML = svg('Decode by context length', H, b);
+  })();
+
+  (function(){
+    var groups = [['Short prompts', [['one chat, MTP', 70, BEFORE], ['four chats, before 26.9.5', 72, BEFORE], ['four chats, 26.9.5', 119, OURS], ['eight chats, 26.9.5', 137, OURS]]],
+                  ['Four chats, each 28k tokens deep', [['before 26.9.5', 26, BEFORE], ['26.9.5', 64, OURS]]]];
+    var padL = 200, padR = 50, max = 150, rowH = 28, y = 0, b = '';
+    var sx = function(v){return padL + (W - padL - padR) * v / max;};
+    groups.forEach(function(g){
+      b += t(0, y + 14, g[0], ' font-weight="700"'); y += 26;
+      g[1].forEach(function(r){
+        var ours = r[2] === OURS;
+        b += t(padL - 12, y + 13, r[0], ' text-anchor="end"' + (ours ? ' font-weight="600"' : ' fill-opacity=".6"'));
+        b += bar(padL, y + 2, sx(r[1]) - padL, 14, r[2]) + t(sx(r[1]) + 8, y + 14, r[1], ours ? ' font-weight="700"' : ' fill-opacity=".6"');
+        y += rowH;
+      });
+      y += 14;
+    });
+    b = vgrid(sx, [0, 25, 50, 75, 100, 125, 150], 0, y - 10) + b;
+    document.getElementById('c-conc').innerHTML = svg('Combined decode across concurrent chats', y + 16, b);
+  })();
+
+  (function(){
+    var padL = 170, padR = 10, max = 130, H = 150;
+    var sx = function(v){return padL + (W - padL - padR) * v / max;};
+    var b = vgrid(sx, [0, 25, 50, 75, 100, 125], 0, H - 26);
+    function row(y, label, sub, parts){
+      b += t(padL - 12, y + 14, label, ' text-anchor="end" font-weight="700"') + t(padL - 12, y + 30, sub, ' text-anchor="end" fill-opacity=".5"');
+      var x = 0;
+      parts.forEach(function(p){
+        var n = p[2] || 1, w = p[0] / n;
+        for (var k = 0; k < n; k++){b += '<rect x="' + (sx(x) + 1) + '" y="' + y + '" width="' + Math.max(1.5, sx(x + w) - sx(x) - 2) + '" height="36" rx="6" fill="' + p[1] + '"/>'; x += w;}
+        if (p[3]) b += t((sx(x - p[0]) + sx(x)) / 2, y + 23, p[3], ' text-anchor="middle" fill="#fff" font-weight="600"');
+      });
+    }
+    row(4, 'before', '125 ms · 72 tok/s', [[95, DARK, 1, 'verify, 16 rows'], [21, OURS, 12], [9, BEFORE]]);
+    row(64, '26.9.5', '~106 ms · 119 tok/s', [[95, DARK, 1, 'verify, 16 rows'], [6, OURS, 3], [5, BEFORE]]);
+    document.getElementById('c-round').innerHTML = svg('One four-chat MTP round', H, b);
+  })();
+
+  (function(){
+    var groups = [['16k context', [45.1, 51.9, 54.7]], ['32k context', [37.1, 46.1, 50.8]]], fills = [BEFORE, REF, OURS];
+    var padL = 36, padB = 30, H = 250, max = 60, bw = 70, gap = 12, gw = (W - padL) / 2;
+    var sy = function(v){return 10 + (H - 10 - padB) * (1 - v / max);};
+    var b = '';
+    [0, 20, 40, 60].forEach(function(v){b += '<line x1="' + padL + '" x2="' + W + '" y1="' + sy(v) + '" y2="' + sy(v) + '" stroke="currentColor" stroke-opacity=".07"/>' + t(padL - 8, sy(v) + 4, v, ' text-anchor="end" fill-opacity=".45"');});
+    groups.forEach(function(g, i){
+      var cx = padL + gw * i + gw / 2, x0 = cx - (3 * bw + 2 * gap) / 2;
+      g[1].forEach(function(v, k){
+        var x = x0 + k * (bw + gap), y = sy(v);
+        b += '<rect x="' + x + '" y="' + y + '" width="' + bw + '" height="' + (H - padB - y) + '" rx="8" fill="' + fills[k] + '"/>';
+        b += t(x + bw / 2, y - 8, v, ' text-anchor="middle"' + (k === 2 ? ' font-weight="700" fill="#0071e3"' : ' fill-opacity=".6"'));
+      });
+      b += t(cx, H - 8, g[0], ' text-anchor="middle" font-weight="600"');
+    });
+    document.getElementById('c-kv8').innerHTML = svg('8-bit KV vs bf16 KV decode', H, b);
+  })();
+})();
+</script>
+<script>
+// Fig 1: plain decode (one token per read) vs a four-lane 16-row MTP verify, same clock.
+(function(){
+  var PLAIN = 0.34, ROUND = 1.06, VERIFY = 0.95, LOOP = 14;
+  var KEEP = [4,3,2,4,3,4,1,4,3,3,4,2,4,3,4,3,2,4,3,3];
+  var TEXT = [
+    'def merge(a, b): out = [] i = j = 0 while i < len(a) and j < len(b): if a[i] <= b[j]: out.append(a[i]) i += 1 else: out.append(b[j]) j += 1 return out + a[i:] + b[j:]',
+    'Hi Sam, thanks for sending the draft over. I read it on the train this morning and the numbers section is much clearer now. Two small things before we ship it: the chart needs a unit, and the intro is long.',
+    '{"invoice": "INV-2041", "date": "2026-09-18", "items": [{"sku": "A-17", "qty": 3, "price": 12.5}, {"sku": "B-02", "qty": 1, "price": 99.0}], "total": 136.5, "paid": false}',
+    'SELECT user_id, count(*) AS orders FROM orders WHERE created_at >= now() - interval \'30 days\' GROUP BY user_id HAVING count(*) > 2 ORDER BY orders DESC LIMIT 20;'
+  ].map(function(s){return s.split(' ');});
+
+  function build(root, lanes){
+    var rows = root.querySelector('.rows'), streams = root.querySelector('.streams'), cells = [], lines = [];
+    rows.innerHTML = '<em></em>' + ['t', 'd1', 'd2', 'd3'].map(function(h){return '<em class="h">' + h + '</em>';}).join('');
+    for (var r = 0; r < 4; r++){
+      rows.insertAdjacentHTML('beforeend', '<em>chat ' + (r + 1) + '</em>');
+      cells.push([]);
+      for (var c = 0; c < 4; c++){
+        var d = document.createElement('div');
+        d.className = 'cell' + (r < lanes && (lanes > 1 || c === 0) ? ' live' : '');
+        rows.appendChild(d); cells[r].push(d);
+      }
+    }
+    for (var l = 0; l < lanes; l++){
+      streams.insertAdjacentHTML('beforeend', '<div class="stream"><em>› ' + (l + 1) + '</em><span><bdi></bdi></span></div>');
+      lines.push(streams.lastChild.querySelector('bdi'));
+    }
+    return {fill: root.querySelector('.read-fill'), cells: cells, lines: lines, reads: root.querySelector('.reads'), toks: root.querySelector('.toks')};
+  }
+  var P = build(document.getElementById('t-plain'), 1), O = build(document.getElementById('t-ours'), 4), mult = document.getElementById('mult');
+  function keepFor(round, lane){return KEEP[(round * 3 + lane * 5) % KEEP.length];}
+  function show(el, words, done, fresh){
+    var a = words.slice(0, Math.max(0, done - fresh)).join(' '), b = words.slice(Math.max(0, done - fresh), done).join(' ');
+    el.innerHTML = a.replace(/&/g, '&amp;').replace(/</g, '&lt;') + (b ? ' <span class="fresh">' + b.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</span>' : '');
+  }
+
+  var t0 = null, paused = false, pauseAt = 0;
+  function frame(now){
+    requestAnimationFrame(frame);
+    if (t0 === null) t0 = now;
+    if (paused) return;
+    var t = ((now - t0) / 1000) % LOOP;
+
+    var pr = Math.floor(t / PLAIN), pf = (t % PLAIN) / PLAIN;
+    P.fill.style.width = (pf * 100) + '%';
+    P.cells[0][0].className = 'cell live' + (pr > 0 ? ' keep' + (pf < .85 ? ' old' : '') : '');
+    show(P.lines[0], TEXT[0], pr % TEXT[0].length, 1);
+    P.reads.textContent = pr; P.toks.textContent = pr;
+
+    var rr = Math.floor(t / ROUND), vf = Math.min(1, (t % ROUND) / VERIFY), shown = vf < 1 ? rr - 1 : rr, total = 0;
+    O.fill.style.width = (vf * 100) + '%';
+    for (var lane = 0; lane < 4; lane++){
+      var k = shown < 0 ? 0 : keepFor(shown, lane), done = 0;
+      for (var q = 0; q < rr; q++) done += keepFor(q, lane);
+      total += done;
+      for (var c = 0; c < 4; c++) O.cells[lane][c].className = 'cell live' + (shown < 0 ? '' : c < k ? ' keep' + (vf < 1 ? ' old' : '') : ' drop');
+      show(O.lines[lane], TEXT[lane], done % TEXT[lane].length, rr > 0 ? keepFor(rr - 1, lane) : 0);
+    }
+    O.reads.textContent = rr; O.toks.textContent = total;
+    mult.textContent = rr > 0 && pr > 0 ? (total / pr).toFixed(1) + '×' : '…';
+  }
+  requestAnimationFrame(frame);
+  document.getElementById('console').addEventListener('click', function(){
+    var now = performance.now();
+    if (paused){t0 += now - pauseAt; paused = false;} else {pauseAt = now; paused = true;}
+  });
+})();
+</script>
+</body>
+</html>

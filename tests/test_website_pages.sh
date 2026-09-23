@@ -125,9 +125,9 @@ done
 
 # ── 6: download CTAs point at the direct latest-DMG URL (version-free) ──────
 # GitHub redirects releases/latest/download/<asset> to the newest release's
-# asset, so this never needs a version bump. The asset name MLXCore.dmg is
+# asset, so this never needs a version bump. The asset name MLX-Serve.dmg is
 # stable across releases (produced by app/build.sh).
-DMG_URL="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLXCore.dmg"
+DMG_URL="https://github.com/ddalcu/mlx-serve/releases/latest/download/MLX-Serve.dmg"
 for f in "${html_files[@]}"; do
   check "$f" "$DMG_URL" "$f: direct DMG download CTA"
 done
