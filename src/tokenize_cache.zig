@@ -58,8 +58,7 @@ pub const TokenizeCache = struct {
     }
 
     /// Compute the cache key for a chat-template render. Returns null if
-    /// any input forbids caching (currently: images present on any
-    /// message).
+    /// any input forbids caching (media on any message).
     pub fn keyFor(
         messages: []const chat_mod.Message,
         tools_json: ?[]const u8,
@@ -69,7 +68,7 @@ pub const TokenizeCache = struct {
         continue_final: bool,
         template_kwargs: ?[]const u8,
     ) ?u64 {
-        for (messages) |m| if (m.images != null) return null;
+        for (messages) |m| if (chat_mod.messageHasMedia(m)) return null;
         var h = std.hash.Wyhash.init(0xC0DEC0DE);
         for (messages) |m| {
             h.update(m.role);

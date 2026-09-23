@@ -567,14 +567,14 @@ final class ChatTurnEngine: ObservableObject, TurnRunning {
 
         // Build the request from the session (its source of truth). We append
         // the streaming placeholder AFTER this so it never lands in the
-        // request — same pattern the agent loop uses. Image/video handling:
-        // only the latest user message's attachments are sent (older turns'
-        // are stripped for bandwidth).
+        // request — same pattern the agent loop uses. Attachments: every user
+        // message's when the server preprocesses (it renders each where it was
+        // sent); Gemma's raw-pixel format (~9 MB an image) keeps only the latest.
         let sessionMsgs = session(sessionId)?.messages ?? []
         let lastUserIdx = sessionMsgs.lastIndex { $0.role == .user }
         let useServerPreprocess = wantsServerImagePreprocess
         let history: [[String: Any]] = sessionMsgs.enumerated().map { i, msg in
-            if i == lastUserIdx, msg.role == .user {
+            if msg.role == .user, useServerPreprocess || i == lastUserIdx {
                 let imgs = msg.images ?? []
                 let vids = msg.videos ?? []
                 let clips = msg.audio ?? []
@@ -841,7 +841,8 @@ final class ChatTurnEngine: ObservableObject, TurnRunning {
                 maxTokens: turnMax,
                 buildMultimodalContent: { text, images in
                     Self.buildMultimodalContent(text: text, images: images, serverPreprocess: useServerPreprocess)
-                }
+                },
+                historyImages: useServerPreprocess
             )
             let userMsg = history.last { ($0["role"] as? String) == "user" }?["content"] as? String ?? ""
             let mcpToolsJSON = config.mcpMode ? mcpManager.toolDefinitionsJSON() : nil

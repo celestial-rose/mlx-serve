@@ -92,12 +92,12 @@ echo "  -> $(echo "$FINE" | tr '\n' '|')"
 grep -q "lfm2 2x3 tiles + thumbnail on a 1536x1024 canvas (1788 tokens)" "$LOG" \
   && echo "  OK: tile grid + thumbnail match the reference" \
   || { echo "  FAIL: wrong tile layout"; grep "Decoded" "$LOG" | tail -2; FAIL=1; }
-grep -q "Multimodal: processing 7 image(s)" "$LOG" \
-  && echo "  OK: 6 tiles + thumbnail each encoded separately" \
-  || { echo "  FAIL: tiles were not encoded as separate images"; grep "Multimodal: processing" "$LOG" | tail -2; FAIL=1; }
-grep -q "Inserted 1788 image" "$LOG" \
+grep -q "Multimodal: 1 item(s), 7 encoder piece(s)" "$LOG" \
+  && echo "  OK: 6 tiles + thumbnail each encoded separately, one item" \
+  || { echo "  FAIL: tiles were not encoded as separate pieces of one item"; grep "Multimodal:" "$LOG" | tail -2; FAIL=1; }
+grep -q "1788 image + 0 video" "$LOG" \
   && echo "  OK: every tile's pads reached the prompt" \
-  || { echo "  FAIL: pad count does not match the encoder output"; grep "Inserted" "$LOG" | tail -2; FAIL=1; }
+  || { echo "  FAIL: pad count does not match the encoder output"; grep "Multimodal:" "$LOG" | tail -2; FAIL=1; }
 
 echo "== [5/7] tiling is what makes the fine print legible =="
 # The bar is a comparison, not an absolute: this checkpoint reads large text

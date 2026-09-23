@@ -575,14 +575,6 @@ pub const ModelConfig = struct {
     vision_start_token_id: u32 = 0,
     vision_end_token_id: u32 = 0,
 
-    // Token IDs that mark the start of a user turn in the rendered prompt.
-    // Populated at startup by encoding a chat-template-specific prefix string
-    // (e.g. "<|turn>user\n" for Gemma 4, "<|im_start|>user\n" for Qwen ChatML).
-    // Used by insertImageTokens to locate the latest user turn — a hard-coded
-    // ID search would silently break across architectures and quantizations.
-    user_turn_marker_ids: [16]u32 = @splat(0),
-    user_turn_marker_len: u8 = 0,
-
     // Gemma 4: dual head dimensions and KV sharing
     global_head_dim: u32 = 0, // 0 = same as head_dim
     num_global_key_value_heads: u32 = 0, // 0 = same as num_key_value_heads
@@ -1246,18 +1238,12 @@ pub const ModelConfig = struct {
         return self.eos_token_ids[0..self.num_eos_tokens];
     }
 
-    pub fn userTurnMarkerSlice(self: *const ModelConfig) []const u32 {
-        return self.user_turn_marker_ids[0..self.user_turn_marker_len];
-    }
-
     /// Everything a load derives from the tokenizer; both load paths call it.
     pub fn applyTokenizer(
         self: *ModelConfig,
-        allocator: std.mem.Allocator,
         tok: *const tokenizer_mod.Tokenizer,
         eos_token: ?[]const u8,
-        chat_template: []const u8,
-    ) !void {
+    ) void {
         // Always merge the chat terminator, even when config.json names an EOS:
         // Qwen2.5-Coder's config says <|endoftext|> but turns end on <|im_end|>.
         if (eos_token) |eos_str| {
@@ -1278,40 +1264,14 @@ pub const ModelConfig = struct {
                 log.info("Added <pad> as stop token (id={d})\n", .{pad_id});
             }
         }
-        try self.populateUserTurnMarker(allocator, tok, chat_template);
         self.populateLfm2ImageTokens(tok);
-    }
-
-    /// Encode the architecture-appropriate user-turn prefix and store the IDs
-    /// on the config. Selects the prefix by matching marker tokens that appear
-    /// in `chat_template`, so a model that ships an unusual template still
-    /// gets the right tokenization. No-op (leaves length=0) when no known
-    /// pattern matches — insertImageTokens then falls back to its end-anchored
-    /// heuristic.
-    pub fn populateUserTurnMarker(
-        self: *ModelConfig,
-        allocator: std.mem.Allocator,
-        tok: *const tokenizer_mod.Tokenizer,
-        chat_template: []const u8,
-    ) !void {
-        const prefix = pickUserTurnPrefix(chat_template) orelse return;
-        const ids = try tok.encode(allocator, prefix);
-        defer allocator.free(ids);
-        const cap = self.user_turn_marker_ids.len;
-        if (ids.len == 0 or ids.len > cap) {
-            log.warn("user turn marker '{s}' encoded to {d} tokens (cap {d}); skipping\n", .{ prefix, ids.len, cap });
-            return;
-        }
-        @memcpy(self.user_turn_marker_ids[0..ids.len], ids);
-        self.user_turn_marker_len = @intCast(ids.len);
-        log.info("User turn marker: \"{s}\" -> {d} tokens\n", .{ prefix, ids.len });
     }
 
     /// LFM2-VL wraps its image-token run in `<|image_start|>`/`<|image_end|>`,
     /// labels every tile with `<|img_row_R_col_C|>` and marks the thumbnail
     /// with `<|img_thumbnail|>`. NONE of those ids appear in config.json — the
     /// tokenizer is the only place they exist — so they are resolved by STRING
-    /// at load, like the user-turn marker. A missing marker leaves its id 0,
+    /// at load. A missing marker leaves its id 0,
     /// which every consumer reads as "this checkpoint has no such token".
     pub fn populateLfm2ImageTokens(self: *ModelConfig, tok: *const tokenizer_mod.Tokenizer) void {
         if (!self.lfm2_vision) return;
@@ -1338,29 +1298,6 @@ pub const ModelConfig = struct {
         self.ngram_table_path = null;
     }
 };
-
-/// Pick the user-turn prefix string for a model based on what its chat template
-/// emits at the start of a user turn. Order matters — the more specific Gemma 4
-/// `<|turn>` is checked before the older `<start_of_turn>` so a tokenizer that
-/// happens to register both still picks the one its template actually uses.
-pub fn pickUserTurnPrefix(chat_template: []const u8) ?[]const u8 {
-    if (std.mem.indexOf(u8, chat_template, "<|turn>") != null) {
-        return "<|turn>user\n"; // Gemma 4
-    }
-    if (std.mem.indexOf(u8, chat_template, "<start_of_turn>") != null) {
-        return "<start_of_turn>user\n"; // Gemma 3
-    }
-    if (std.mem.indexOf(u8, chat_template, "<|im_start|>") != null) {
-        return "<|im_start|>user\n"; // Qwen / generic ChatML
-    }
-    if (std.mem.indexOf(u8, chat_template, "<|start_header_id|>") != null) {
-        return "<|start_header_id|>user<|end_header_id|>\n\n"; // Llama 3
-    }
-    if (std.mem.indexOf(u8, chat_template, "<|start|>user<|message|>") != null) {
-        return "<|start|>user<|message|>"; // Muse-Glimmer (harmony channels)
-    }
-    return null;
-}
 
 pub fn parseConfig(io: std.Io, allocator: std.mem.Allocator, model_dir: []const u8) !ModelConfig {
     const path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{model_dir});
@@ -4432,46 +4369,6 @@ test "ModelConfig eosTokenSlice" {
     try testing.expectEqual(@as(usize, 2), slice.len);
     try testing.expectEqual(@as(u32, 10), slice[0]);
     try testing.expectEqual(@as(u32, 20), slice[1]);
-}
-
-test "pickUserTurnPrefix Gemma 4 wins over older patterns" {
-    // Gemma 4 templates also contain "<start_of_turn>" inside fallback comments
-    // in some checkpoints — make sure we still pick the Gemma 4 marker first.
-    const tmpl = "{{- '<|turn>' + role + '\n' }} {# legacy: <start_of_turn> #}";
-    try testing.expectEqualStrings("<|turn>user\n", pickUserTurnPrefix(tmpl).?);
-}
-
-test "pickUserTurnPrefix Gemma 3" {
-    const tmpl = "<start_of_turn>user\n{{ message['content'] }}<end_of_turn>";
-    try testing.expectEqualStrings("<start_of_turn>user\n", pickUserTurnPrefix(tmpl).?);
-}
-
-test "pickUserTurnPrefix Qwen ChatML" {
-    const tmpl = "<|im_start|>user\n{{ message['content'] }}<|im_end|>";
-    try testing.expectEqualStrings("<|im_start|>user\n", pickUserTurnPrefix(tmpl).?);
-}
-
-test "pickUserTurnPrefix Llama 3" {
-    const tmpl = "<|start_header_id|>user<|end_header_id|>\n\n{{ content }}<|eot_id|>";
-    try testing.expectEqualStrings("<|start_header_id|>user<|end_header_id|>\n\n", pickUserTurnPrefix(tmpl).?);
-}
-
-test "pickUserTurnPrefix unknown template returns null" {
-    try testing.expect(pickUserTurnPrefix("[INST] {{ content }} [/INST]") == null);
-    try testing.expect(pickUserTurnPrefix("") == null);
-}
-
-test "ModelConfig userTurnMarkerSlice respects length" {
-    var config = ModelConfig{};
-    config.user_turn_marker_ids[0] = 105;
-    config.user_turn_marker_ids[1] = 2364;
-    config.user_turn_marker_ids[2] = 107;
-    config.user_turn_marker_len = 3;
-    const slice = config.userTurnMarkerSlice();
-    try testing.expectEqual(@as(usize, 3), slice.len);
-    try testing.expectEqual(@as(u32, 105), slice[0]);
-    try testing.expectEqual(@as(u32, 2364), slice[1]);
-    try testing.expectEqual(@as(u32, 107), slice[2]);
 }
 
 test "ModelConfig isGlobalLayer with sliding window" {

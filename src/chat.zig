@@ -667,7 +667,10 @@ fn renderChatTemplate(
     // Harmony (gpt_oss) indexes into `message.content` after only checking that
     // the KEY exists, so a null there breaks every tool round-trip. Sniffed off
     // the template's own channel marker, like the reasoning drop above.
-    const empty_content: EmptyContent = if (std.mem.indexOf(u8, tpl, "<|channel|>") != null)
+    // LFM2-VL iterates any non-string content, so a null there raises on every
+    // tool-call turn.
+    const empty_content: EmptyContent = if (std.mem.indexOf(u8, tpl, "<|channel|>") != null or
+        std.mem.indexOf(u8, tpl, "if content is not string") != null)
         .empty_string
     else
         .null_literal;
@@ -877,6 +880,9 @@ fn synthesizeToolFallbackMessages(
             try out.append(arena, .{
                 .role = "user",
                 .content = wrapped,
+                .images = msg.images,
+                .videos = msg.videos,
+                .audio = msg.audio,
             });
             continue;
         }
@@ -946,6 +952,48 @@ pub fn serializeMessagesJsonFor(allocator: std.mem.Allocator, messages: []const 
     return serializeMessagesJsonImpl(allocator, messages, empty_content, templateRequiresReasoningField(chat_config.chat_template));
 }
 
+pub fn messageHasMedia(msg: Message) bool {
+    return (msg.images != null and msg.images.?.len > 0) or
+        (msg.videos != null and msg.videos.?.len > 0) or
+        (msg.audio != null and msg.audio.?.len > 0);
+}
+
+/// An LFM2-VL tiled source is several `ImageData` entries (tiles + thumbnail);
+/// the template renders ONE placeholder for the source, at its first piece.
+pub fn isImageItemStart(img: ImageData) bool {
+    return img.tile_rows == 0 or img.tile_index == 0;
+}
+
+/// Media as content parts, so the model's own template renders one
+/// placeholder per item where the message sits: images, videos, audio (the
+/// order the server encodes them), then the text.
+fn appendMediaContentParts(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), msg: Message) !void {
+    try buf.append(allocator, '[');
+    var first = true;
+    for (msg.images orelse &[_]ImageData{}) |img| {
+        if (!isImageItemStart(img)) continue;
+        if (!first) try buf.append(allocator, ',');
+        first = false;
+        try buf.appendSlice(allocator, "{\"type\":\"image\"}");
+    }
+    for (msg.videos orelse &[_]VideoData{}) |_| {
+        if (!first) try buf.append(allocator, ',');
+        first = false;
+        try buf.appendSlice(allocator, "{\"type\":\"video\"}");
+    }
+    for (msg.audio orelse &[_]AudioData{}) |_| {
+        if (!first) try buf.append(allocator, ',');
+        first = false;
+        try buf.appendSlice(allocator, "{\"type\":\"audio\"}");
+    }
+    if (msg.content.len > 0) {
+        try buf.appendSlice(allocator, ",{\"type\":\"text\",\"text\":");
+        try appendJsonString(allocator, buf, msg.content);
+        try buf.append(allocator, '}');
+    }
+    try buf.append(allocator, ']');
+}
+
 fn serializeMessagesJsonImpl(allocator: std.mem.Allocator, messages: []const Message, empty_content: EmptyContent, reasoning_required: bool) ![]const u8 {
     var buf = std.ArrayList(u8).empty;
     errdefer buf.deinit(allocator);
@@ -957,7 +1005,9 @@ fn serializeMessagesJsonImpl(allocator: std.mem.Allocator, messages: []const Mes
         try appendJsonString(allocator, &buf, msg.role);
 
         try buf.appendSlice(allocator, ",\"content\":");
-        if (msg.content.len > 0) {
+        if (messageHasMedia(msg)) {
+            try appendMediaContentParts(allocator, &buf, msg);
+        } else if (msg.content.len > 0) {
             try appendJsonString(allocator, &buf, msg.content);
         } else switch (empty_content) {
             .null_literal => try buf.appendSlice(allocator, "null"),
@@ -14636,4 +14686,38 @@ test "foldSystemMessages: a system turn past index 0 joins the leading system me
     try plain.append(al, .{ .role = "user", .content = "hi" });
     try std.testing.expect((try foldSystemMessages(al, &plain)) == null);
     try std.testing.expectEqual(@as(usize, 2), plain.items.len);
+}
+
+test "media renders one template placeholder per item, a tool image inside its tool response" {
+    // Every vision template we serve must place a tool message's image: one it
+    // drops is a named 400 on every later turn of an agent session.
+    const allocator = testing.allocator;
+    const Case = struct { tpl: []const u8, eos: []const u8, ph: []const u8, tool_image: []const u8 };
+    const cases = [_]Case{
+        .{
+            .tpl = @embedFile("fixtures/qwen38_27b_chat_template.jinja"),
+            .eos = "<|im_end|>",
+            .ph = "<|vision_start|><|image_pad|><|vision_end|>",
+            .tool_image = "<tool_response>\n<|vision_start|><|image_pad|><|vision_end|>Read p3.png\n</tool_response>",
+        },
+        .{ .tpl = @embedFile("fixtures/muse_chat_template.jinja"), .eos = "<|eot|>", .ph = "<|patch|>", .tool_image = "\n<|patch|>Read p3.png" },
+        .{ .tpl = @embedFile("fixtures/lfm2_vl_chat_template.jinja"), .eos = "<|im_end|>", .ph = "<image>", .tool_image = "<image><tool_response>\nRead p3.png" },
+    };
+    const img = [_]ImageData{.{ .pixels = "", .width = 1, .height = 1 }};
+    const two = [_]ImageData{ img[0], img[0] };
+    const tc = [_]ToolCall{.{ .id = "c1", .name = "read", .arguments = "{\"path\":\"p3.png\"}" }};
+    const messages = [_]Message{
+        .{ .role = "user", .content = "page one", .images = &img },
+        .{ .role = "assistant", .content = "seen" },
+        .{ .role = "user", .content = "pages two", .images = &two },
+        .{ .role = "assistant", .content = "", .tool_calls = &tc },
+        .{ .role = "tool", .content = "Read p3.png", .tool_call_id = "c1", .images = &img },
+    };
+    for (cases) |c| {
+        var config = ChatConfig{ .chat_template = c.tpl, .bos_token = null, .eos_token = c.eos, .add_bos_token = false, .allocator = allocator };
+        const rendered = try renderChatTemplate(allocator, &messages, &config, null, null, false, null, false);
+        defer allocator.free(rendered);
+        try testing.expectEqual(@as(usize, 4), std.mem.count(u8, rendered, c.ph));
+        try testing.expect(std.mem.indexOf(u8, rendered, c.tool_image) != null);
+    }
 }

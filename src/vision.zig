@@ -84,10 +84,85 @@ const UnifiedWeights = struct {
 // Matches mlx-vlm's Gemma4 VisionModel: SigLIP encoder with 2D RoPE,
 // clipped linears, V-norm, position-based pooling, post-projection norm.
 
+/// Encoder outputs by input hash, so a conversation's history media is encoded
+/// once per load, not on every turn (20 history screenshots re-encoded cost
+/// Flash-Next ~7 s per turn). Inference thread only, like every mlx call.
+pub const EmbeddingCache = struct {
+    const Entry = struct { key: u64, emb: mlx.mlx_array, bytes: usize, last_used: u64 };
+    pub const CAP_BYTES: usize = 256 << 20;
+
+    entries: std.ArrayList(Entry) = .empty,
+    bytes: usize = 0,
+    clock: u64 = 0,
+
+    /// A new handle to the cached rows (caller frees), or null.
+    pub fn get(self: *EmbeddingCache, key: u64) ?mlx.mlx_array {
+        for (self.entries.items) |*e| {
+            if (e.key != key) continue;
+            self.clock += 1;
+            e.last_used = self.clock;
+            var out = mlx.mlx_array_new();
+            _ = mlx.mlx_array_set(&out, e.emb);
+            return out;
+        }
+        return null;
+    }
+
+    /// Mark the start of a request: entries it touches from here on are not
+    /// evicted by its own puts.
+    pub fn beginRequest(self: *const EmbeddingCache) u64 {
+        return self.clock;
+    }
+
+    /// Evaluate `emb` and keep it under `key`, evicting least recently used
+    /// entries past `cap` but never one used since `epoch`: every turn reads
+    /// the whole history in order, and plain LRU on that scan evicts exactly
+    /// the entry the next turn needs first. When nothing is evictable the new
+    /// entry is not kept. Best effort: a failure only skips the cache.
+    pub fn put(self: *EmbeddingCache, allocator: std.mem.Allocator, key: u64, emb: mlx.mlx_array, cap: usize, epoch: u64) void {
+        if (mlx.mlx_array_eval(emb) != 0) return;
+        const bytes = mlx.mlx_array_size(emb) * mlx.mlx_array_itemsize(emb);
+        if (bytes > cap) return;
+        while (self.bytes + bytes > cap) {
+            var lru: ?usize = null;
+            for (self.entries.items, 0..) |e, i| {
+                if (e.last_used > epoch) continue;
+                if (lru == null or e.last_used < self.entries.items[lru.?].last_used) lru = i;
+            }
+            const victim = lru orelse return;
+            const gone = self.entries.swapRemove(victim);
+            _ = mlx.mlx_array_free(gone.emb);
+            self.bytes -= gone.bytes;
+        }
+        var held = mlx.mlx_array_new();
+        _ = mlx.mlx_array_set(&held, emb);
+        self.clock += 1;
+        self.entries.append(allocator, .{ .key = key, .emb = held, .bytes = bytes, .last_used = self.clock }) catch {
+            _ = mlx.mlx_array_free(held);
+            return;
+        };
+        self.bytes += bytes;
+    }
+
+    /// Drop everything: the bytes go back to a request that needs them.
+    pub fn clear(self: *EmbeddingCache) void {
+        for (self.entries.items) |e| _ = mlx.mlx_array_free(e.emb);
+        self.entries.clearRetainingCapacity();
+        self.bytes = 0;
+    }
+
+    pub fn deinit(self: *EmbeddingCache, allocator: std.mem.Allocator) void {
+        self.clear();
+        self.entries.deinit(allocator);
+        self.* = .{};
+    }
+};
+
 pub const VisionEncoder = struct {
     config: ModelConfig,
     s: mlx.mlx_stream,
     allocator: std.mem.Allocator,
+    emb_cache: EmbeddingCache = .{},
 
     // Patch embedding
     patch_proj_w: mlx.mlx_array, // [hidden, patch_dim] = [768, 768]
@@ -248,6 +323,7 @@ pub const VisionEncoder = struct {
     }
 
     pub fn deinit(self: *VisionEncoder) void {
+        self.emb_cache.deinit(self.allocator);
         _ = mlx.mlx_array_free(self.half);
         _ = mlx.mlx_array_free(self.one);
         if (self.qwen) |*q| q.deinit();
@@ -1696,4 +1772,34 @@ test "quantLinear dense fallback computes x @ Wᵀ for a bf16 projector" {
     try testing.expectApproxEqAbs(@as(f32, 1.0), ptr[0], 1e-4);
     try testing.expectApproxEqAbs(@as(f32, 2.0), ptr[1], 1e-4);
     try testing.expectApproxEqAbs(@as(f32, 3.0), ptr[2], 1e-4);
+}
+
+test "EmbeddingCache keeps what the current request uses: a history past the cap still hits" {
+    // Every turn reads the whole history in the same order; plain LRU on that
+    // scan evicts exactly the entry the next turn needs first, so nothing hits.
+    var cache: EmbeddingCache = .{};
+    defer cache.deinit(testing.allocator);
+    var buf = [_]f32{ 1, 2, 3, 4 };
+    const shape = [_]c_int{ 1, 4 };
+    var arrays: [3]mlx.mlx_array = undefined;
+    for (&arrays) |*a| a.* = mlx.mlx_array_new_data(&buf, &shape, 2, .float32);
+    defer for (arrays) |a| {
+        _ = mlx.mlx_array_free(a);
+    };
+    const cap = 2 * 16; // two 16-byte entries, a three-item history
+    for (0..3) |turn| {
+        const epoch = cache.beginRequest();
+        var hits: usize = 0;
+        for (arrays, 0..) |a, key| {
+            if (cache.get(key)) |hit| {
+                _ = mlx.mlx_array_free(hit);
+                hits += 1;
+            } else cache.put(testing.allocator, key, a, cap, epoch);
+        }
+        try testing.expectEqual(@as(usize, if (turn == 0) 0 else 2), hits);
+    }
+    const kept = cache.get(0) orelse return error.Miss;
+    defer _ = mlx.mlx_array_free(kept);
+    try testing.expectEqual(@as(f32, 3), mlx.mlx_array_data_float32(kept).?[2]);
+    try testing.expectEqual(@as(usize, cap), cache.bytes);
 }

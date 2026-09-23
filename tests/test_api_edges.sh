@@ -118,9 +118,9 @@ req POST /v1/messages '{"model":"m","max_tokens":5,"messages":[{"role":"user","c
 expect_status 400 "messages: undecodable image block refused"
 req POST /v1/responses '{"model":"m","input":[{"role":"user","content":[{"type":"input_image","image_url":"http://127.0.0.1:1/x.png"}]}],"max_output_tokens":5}'
 expect_status 400 "responses: remote input_image refused"
-# a historical (non-active) image is never decoded, so it is never refused
+# every image in the conversation reaches the model, so a history one is decoded too
 req POST /v1/chat/completions "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[$IMG_HTTP,{\"type\":\"text\",\"text\":\"old\"}]},{\"role\":\"assistant\",\"content\":\"ok\"},$U],\"max_tokens\":5}"
-expect_status 200 "chat: a historical bad image is not the active turn's problem"
+expect_status 400 "chat: an undecodable image in history is refused by name"
 
 echo "=== content shapes ==="
 req POST /v1/chat/completions '{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"Repeat exactly: ALPHA"},{"type":"text","text":" BRAVO"}]}],"max_tokens":10,"temperature":0}'

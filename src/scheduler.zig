@@ -279,8 +279,8 @@ pub const SubmitParams = struct {
     /// Vision embeddings spliced at image-token positions during prefill.
     /// Ownership transferred to the slot; freed on slot.deinit.
     vision_embeddings: ?mlx.mlx_array = null,
-    /// Prefix-cache key for the media under the placeholder tokens (0 = none).
-    vision_key: u64 = 0,
+    /// Media items in the prompt, for the prefix-cache key. Borrowed; the slot copies it.
+    media: []const prefix_cache_mod.MediaSpan = &.{},
     /// Workload key for hot-cache eviction (`server.requestCacheKey`, 0 = anonymous).
     cache_key: u64 = 0,
     /// Qwen3-VL interleaved M-RoPE: server-computed flat [3 × mrope_total] i32
@@ -423,24 +423,6 @@ pub const NextResult = union(enum) {
     err: void,
 };
 
-fn firstMediaPlaceholder(
-    has_media: bool,
-    tokens: []const u32,
-    image_token_id: u32,
-    audio_token_id: u32,
-    video_token_id: u32,
-) ?usize {
-    // The placeholder ids are ordinary vocabulary entries, so a text-only
-    // prompt can contain one; a boundary exists only where media rows do.
-    if (!has_media) return null;
-    for (tokens, 0..) |token, i| {
-        if ((image_token_id > 0 and token == image_token_id) or
-            (audio_token_id > 0 and token == audio_token_id) or
-            (video_token_id > 0 and token == video_token_id)) return i;
-    }
-    return null;
-}
-
 /// Per-request state. Owned by the Scheduler from `submit` until `complete`.
 pub const Slot = struct {
     allocator: std.mem.Allocator,
@@ -468,12 +450,10 @@ pub const Slot = struct {
     /// when never consumed.
     cancelled_prefill: Generator.CancelledCheckpointSink = .{},
     vision_embeddings: ?mlx.mlx_array,
-    vision_key: u64,
+    /// Media items in `full_prompt` (owned): the prefix-cache key of their rows.
+    media: []prefix_cache_mod.MediaSpan,
     cache_key: u64 = 0,
     skip_prefix_cache: bool = false,
-    /// First dynamic image/audio/video placeholder in `full_prompt`. Cache
-    /// state before this position is safe to share across media hashes.
-    media_start: ?usize,
     /// Qwen3-VL M-RoPE position-id table (flat [3 × mrope_total]) + decode delta.
     /// Owned by the slot; `mrope_pos` freed on deinit.
     mrope_pos: ?[]const i32,
@@ -687,13 +667,8 @@ pub const Slot = struct {
         const full_prompt_src = params.full_prompt orelse params.prompt_ids;
         const full_prompt_owned = try allocator.dupe(u32, full_prompt_src);
         errdefer allocator.free(full_prompt_owned);
-        const media_start = firstMediaPlaceholder(
-            params.vision_embeddings != null,
-            full_prompt_owned,
-            config.image_token_id,
-            config.audio_token_id,
-            config.video_token_id,
-        );
+        const media_owned = try allocator.dupe(prefix_cache_mod.MediaSpan, params.media);
+        errdefer allocator.free(media_owned);
         const eos_owned = try allocator.dupe(u32, params.eos_token_ids);
         errdefer allocator.free(eos_owned);
 
@@ -705,9 +680,8 @@ pub const Slot = struct {
             .moe_seq_offset = 0,
             .ssm_entries = ssm_entries,
             .vision_embeddings = params.vision_embeddings,
-            .vision_key = params.vision_key,
+            .media = media_owned,
             .cache_key = params.cache_key,
-            .media_start = media_start,
             .mrope_pos = params.mrope_pos,
             .mrope_total = params.mrope_total,
             .mrope_delta = params.mrope_delta,
@@ -835,6 +809,7 @@ pub const Slot = struct {
         if (self.mrope_pos) |mp| self.allocator.free(mp);
         self.allocator.free(self.prompt_ids);
         self.allocator.free(self.full_prompt);
+        self.allocator.free(self.media);
         self.allocator.free(self.eos_token_ids);
         if (self.error_code) |code| self.allocator.free(code);
         if (self.generated_ids) |g| self.allocator.free(g);
@@ -1078,6 +1053,14 @@ pub const VisionVideoPixels = struct {
     grid_w: u32,
 };
 
+/// One encoder input. `audio` is raw float32-LE 16 kHz mono PCM, framed into
+/// `audio_samples_per_token` tokens by the unified audio embedder.
+pub const VisionItem = union(enum) {
+    image: VisionImagePixels,
+    video: VisionVideoPixels,
+    audio: []const u8,
+};
+
 /// Phase A4: vision-encode work item. Conn thread fills `images` (raw pixel
 /// data, CPU-only) and calls `Scheduler.encodeVision`, which posts the
 /// request and blocks until the inference thread fills `result` and signals
@@ -1089,26 +1072,16 @@ pub const VisionEncodeRequest = struct {
     /// request. The conn thread holds a refcount (via `ensureLoaded`) for
     /// the duration of the call.
     model: *model_registry_mod.LoadedModel,
-    /// Per-image float32 CHW pixel buffers. Borrowed; must outlive the call.
-    images: []const VisionImagePixels,
-    /// Per-video pre-patchified pixel buffers. Borrowed; must outlive the call.
-    /// Qwen-only (video_token_id != 0) — empty on every other arch.
-    videos: []const VisionVideoPixels = &.{},
-    /// Gemma 4 12B unified audio: per-clip raw float32-LE 16 kHz mono sample
-    /// buffers. Borrowed; must outlive the call. The inference thread frames
-    /// each into 640-sample tokens and projects them through the audio embedder.
-    audio: []const []const u8 = &.{},
-    /// Output: encoded embedding tensor on success — vision soft tokens, then
-    /// video soft tokens, then audio soft tokens, concatenated along the token
-    /// axis (matches the prompt's image/video/audio block insertion order).
-    /// Ownership transfers to the caller.
+    /// Encoder inputs in prompt order. Borrowed; must outlive the call.
+    items: []const VisionItem,
+    /// Each item's pixel/PCM hash, parallel to `items`: the encoder cache key.
+    item_keys: []const u64,
+    /// Output: soft tokens each item produced, parallel to `items`. Caller-owned.
+    item_tokens: []usize,
+    /// Output: every item's soft tokens, concatenated along the token axis in
+    /// prompt order (the splice scatters them positionally). Ownership
+    /// transfers to the caller.
     result: ?mlx.mlx_array = null,
-    /// Output: number of vision / video / audio soft tokens in `result` (in
-    /// that order). The caller inserts exactly this many image / video / audio
-    /// placeholders.
-    n_vision_tokens: usize = 0,
-    n_video_tokens: usize = 0,
-    n_audio_tokens: usize = 0,
     /// Output: error name on failure. Owned by `allocator`; caller frees.
     error_name: ?[]const u8 = null,
     /// Done flag (under done_mu). Caller's wait-loop drains the cond when
@@ -2739,7 +2712,7 @@ fn preloadCpuState(allocator: std.mem.Allocator, io: std.Io, model_dir: []const 
     cc.* = try chat_mod.loadChatConfig(io, allocator, model_dir);
     errdefer cc.deinit();
 
-    try config.applyTokenizer(allocator, tok, cc.eos_token, cc.chat_template);
+    config.applyTokenizer(tok, cc.eos_token);
 
     return .{ .config = config, .tok = tok, .chat_config = cc };
 }
@@ -3233,30 +3206,6 @@ test "modelDiskBytes follows HF-cache symlinks (a snapshot dir measured ZERO)" {
     defer std.testing.allocator.free(snap);
 
     try std.testing.expectEqual(@as(u64, 16), modelDiskBytes(io, snap));
-}
-
-test "preloadCpuState sets the user-turn marker (a registry load placed every image at the prompt's end)" {
-    const io = std.testing.io;
-    const allocator = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.json", .data = "{\"model_type\":\"qwen3\",\"hidden_size\":64,\"head_dim\":16}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "tokenizer.json", .data =
-        \\{"model":{"type":"BPE","vocab":{"user":0,"\u010a":1},"merges":[]},
-        \\ "added_tokens":[{"id":2,"content":"<|im_start|>","special":true},{"id":3,"content":"<|im_end|>","special":true}]}
-    });
-    try tmp.dir.writeFile(io, .{ .sub_path = "tokenizer_config.json", .data =
-        \\{"eos_token":"<|im_end|>","chat_template":"{% for m in messages %}<|im_start|>{{ m.role }}\n{{ m.content }}<|im_end|>\n{% endfor %}"}
-    });
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const path_len = try tmp.dir.realPath(io, &path_buf);
-
-    var s = try preloadCpuState(allocator, io, path_buf[0..path_len], 0);
-    defer freeCpuState(allocator, &s);
-    const want = try s.tok.encode(allocator, "<|im_start|>user\n");
-    defer allocator.free(want);
-    try std.testing.expect(want.len > 0);
-    try std.testing.expectEqualSlices(u32, want, s.config.userTurnMarkerSlice());
 }
 
 test "modelDiskBytes bills only the shards the index names (issue #274)" {
@@ -4811,131 +4760,49 @@ fn runVisionEncode(sch: *Scheduler, req: *VisionEncodeRequest) void {
         finishVisionRequest(sch, req, "VisionEncoderNotLoaded");
         return;
     };
-    if (req.images.len == 0 and req.videos.len == 0 and req.audio.len == 0) {
+    if (req.items.len == 0) {
         finishVisionRequest(sch, req, "EmptyImages");
         return;
     }
 
-    // Encode all soft tokens into `emb_parts`: vision, then video, then audio,
-    // so the single splice channel scatters them in the same order as the
-    // placeholder blocks the conn thread injected (image block, then video
-    // block, then audio block).
     var emb_parts = std.ArrayList(mlx.mlx_array).empty;
     defer emb_parts.deinit(req.allocator);
-    const failParts = struct {
-        fn f(s: *Scheduler, r: *VisionEncodeRequest, parts: []mlx.mlx_array, name: []const u8) void {
-            for (parts) |e| _ = mlx.mlx_array_free(e);
-            finishVisionRequest(s, r, name);
-        }
-    }.f;
-
-    var n_vision: usize = 0;
-    for (req.images) |img| {
+    var cached: usize = 0;
+    const epoch = vision_enc.emb_cache.beginRequest();
+    for (req.items, req.item_keys, 0..) |item, key, i| {
         var emb: mlx.mlx_array = undefined;
-        if (img.grid_h > 0) {
-            // Patch-grid ViT: pixels hold pixel_values [N, feat]; the tower
-            // produces [1, N/merge², out_hidden].
-            const n: usize = @as(usize, img.grid_h) * img.grid_w;
-            const feat: usize = (img.pixels.len / 4) / n;
-            const shape = [_]c_int{ @intCast(n), @intCast(feat) };
-            const pixel_arr = mlx.mlx_array_new_data(img.pixels.ptr, &shape, 2, .float32);
-            defer _ = mlx.mlx_array_free(pixel_arr);
-            emb = vision_enc.forwardPatches(pixel_arr, img.grid_h, img.grid_w) catch |err| {
-                failParts(sch, req, emb_parts.items, @errorName(err));
-                return;
-            };
+        if (vision_enc.emb_cache.get(key)) |hit| {
+            emb = hit;
+            cached += 1;
         } else {
-            const h: c_int = @intCast(img.height);
-            const w: c_int = @intCast(img.width);
-            const shape = [_]c_int{ 1, 3, h, w };
-            const pixel_arr = mlx.mlx_array_new_data(img.pixels.ptr, &shape, 4, .float32);
-            defer _ = mlx.mlx_array_free(pixel_arr);
-            emb = vision_enc.forward(pixel_arr) catch |err| {
-                failParts(sch, req, emb_parts.items, @errorName(err));
+            emb = encodeVisionItem(req, vision_enc, item) catch |err| {
+                for (emb_parts.items) |e| _ = mlx.mlx_array_free(e);
+                finishVisionRequest(sch, req, @errorName(err));
                 return;
             };
+            vision_enc.emb_cache.put(vision_enc.allocator, key, emb, vision_mod.EmbeddingCache.CAP_BYTES, epoch);
         }
-        const es = mlx.getShape(emb);
-        n_vision += @intCast(es[1]);
+        req.item_tokens[i] = @intCast(mlx.getShape(emb)[1]);
         emb_parts.append(req.allocator, emb) catch |err| {
             _ = mlx.mlx_array_free(emb);
-            failParts(sch, req, emb_parts.items, @errorName(err));
+            for (emb_parts.items) |e| _ = mlx.mlx_array_free(e);
+            finishVisionRequest(sch, req, @errorName(err));
             return;
         };
     }
-
-    var n_video: usize = 0;
-    for (req.videos) |vid| {
-        const n: usize = @as(usize, vid.grid_t) * vid.grid_h * vid.grid_w;
-        const feat: usize = (vid.pixels.len / 4) / n;
-        const shape = [_]c_int{ @intCast(n), @intCast(feat) };
-        const pixel_arr = mlx.mlx_array_new_data(vid.pixels.ptr, &shape, 2, .float32);
-        defer _ = mlx.mlx_array_free(pixel_arr);
-        const emb = vision_enc.forwardVideoPatches(pixel_arr, vid.grid_t, vid.grid_h, vid.grid_w) catch |err| {
-            failParts(sch, req, emb_parts.items, @errorName(err));
-            return;
-        };
-        const es = mlx.getShape(emb);
-        n_video += @intCast(es[1]);
-        emb_parts.append(req.allocator, emb) catch |err| {
-            _ = mlx.mlx_array_free(emb);
-            failParts(sch, req, emb_parts.items, @errorName(err));
-            return;
-        };
-    }
-
-    // Audio: frame each clip into 640-sample tokens, project through the
-    // unified audio embedder → [1, n_frames, hidden].
-    var n_audio: usize = 0;
-    for (req.audio) |clip| {
-        const n_samples = clip.len / 4;
-        if (n_samples == 0) continue;
-        const cfg = req.model.config orelse {
-            failParts(sch, req, emb_parts.items, "NoConfig");
-            return;
-        };
-        const samples_per_token: usize = if (cfg.audio_samples_per_token > 0) cfg.audio_samples_per_token else 640;
-        const n_frames = (n_samples + samples_per_token - 1) / samples_per_token;
-        const padded_len = n_frames * samples_per_token;
-        const buf = req.allocator.alloc(f32, padded_len) catch |err| {
-            failParts(sch, req, emb_parts.items, @errorName(err));
-            return;
-        };
-        @memset(buf, 0);
-        @memcpy(std.mem.sliceAsBytes(buf)[0..clip.len], clip);
-        const shape = [_]c_int{ 1, @intCast(n_frames), @intCast(samples_per_token) };
-        const frames_arr = mlx.mlx_array_new_data(buf.ptr, &shape, 3, .float32);
-        req.allocator.free(buf); // mlx_array_new_data copies into an array-owned buffer
-        defer _ = mlx.mlx_array_free(frames_arr);
-        const emb = vision_enc.forwardAudio(frames_arr) catch |err| {
-            failParts(sch, req, emb_parts.items, @errorName(err));
-            return;
-        };
-        n_audio += n_frames;
-        emb_parts.append(req.allocator, emb) catch |err| {
-            _ = mlx.mlx_array_free(emb);
-            failParts(sch, req, emb_parts.items, @errorName(err));
-            return;
-        };
-    }
-
-    if (emb_parts.items.len == 0) {
-        finishVisionRequest(sch, req, "EmptyImages");
-        return;
-    }
-
-    // Single modality/clip: pass through. Multiple: concatenate along token dim.
+    if (cached > 0) log.info("  [vision-cache] {d}/{d} encoder pieces reused\n", .{ cached, req.items.len });
     var combined: mlx.mlx_array = undefined;
     if (emb_parts.items.len == 1) {
         combined = emb_parts.items[0];
-        emb_parts.items[0] = mlx.mlx_array_new(); // sentinel so the deferred-free path is a no-op
+        emb_parts.items[0] = mlx.mlx_array_new(); // sentinel so the free below is a no-op
     } else {
         const cat_vec = mlx.mlx_vector_array_new_data(emb_parts.items.ptr, emb_parts.items.len);
         defer _ = mlx.mlx_vector_array_free(cat_vec);
         combined = mlx.mlx_array_new();
         if (mlx.mlx_concatenate_axis(&combined, cat_vec, 1, vision_enc.s) != 0) {
             _ = mlx.mlx_array_free(combined);
-            failParts(sch, req, emb_parts.items, "ConcatenateFailed");
+            for (emb_parts.items) |e| _ = mlx.mlx_array_free(e);
+            finishVisionRequest(sch, req, "ConcatenateFailed");
             return;
         }
     }
@@ -4944,11 +4811,52 @@ fn runVisionEncode(sch: *Scheduler, req: *VisionEncodeRequest) void {
     req.done_mu.lockUncancelable(sch.io);
     defer req.done_mu.unlock(sch.io);
     req.result = combined;
-    req.n_vision_tokens = n_vision;
-    req.n_video_tokens = n_video;
-    req.n_audio_tokens = n_audio;
     req.done = true;
     req.done_cond.broadcast(sch.io);
+}
+
+/// `[1, n, hidden]` soft tokens for one item.
+fn encodeVisionItem(req: *VisionEncodeRequest, vision_enc: anytype, item: VisionItem) !mlx.mlx_array {
+    switch (item) {
+        .image => |img| {
+            if (img.grid_h > 0) {
+                // Patch-grid ViT: pixels hold pixel_values [N, feat]; the tower
+                // produces [1, N/merge², out_hidden].
+                const n: usize = @as(usize, img.grid_h) * img.grid_w;
+                const feat: usize = (img.pixels.len / 4) / n;
+                const shape = [_]c_int{ @intCast(n), @intCast(feat) };
+                const pixel_arr = mlx.mlx_array_new_data(img.pixels.ptr, &shape, 2, .float32);
+                defer _ = mlx.mlx_array_free(pixel_arr);
+                return vision_enc.forwardPatches(pixel_arr, img.grid_h, img.grid_w);
+            }
+            const shape = [_]c_int{ 1, 3, @intCast(img.height), @intCast(img.width) };
+            const pixel_arr = mlx.mlx_array_new_data(img.pixels.ptr, &shape, 4, .float32);
+            defer _ = mlx.mlx_array_free(pixel_arr);
+            return vision_enc.forward(pixel_arr);
+        },
+        .video => |vid| {
+            const n: usize = @as(usize, vid.grid_t) * vid.grid_h * vid.grid_w;
+            const feat: usize = (vid.pixels.len / 4) / n;
+            const shape = [_]c_int{ @intCast(n), @intCast(feat) };
+            const pixel_arr = mlx.mlx_array_new_data(vid.pixels.ptr, &shape, 2, .float32);
+            defer _ = mlx.mlx_array_free(pixel_arr);
+            return vision_enc.forwardVideoPatches(pixel_arr, vid.grid_t, vid.grid_h, vid.grid_w);
+        },
+        .audio => |clip| {
+            const cfg = req.model.config orelse return error.NoConfig;
+            const spt: usize = if (cfg.audio_samples_per_token > 0) cfg.audio_samples_per_token else 640;
+            const n_frames = (clip.len / 4 + spt - 1) / spt;
+            if (n_frames == 0) return error.EmptyAudio;
+            const buf = try req.allocator.alloc(f32, n_frames * spt);
+            defer req.allocator.free(buf); // mlx_array_new_data copies
+            @memset(buf, 0);
+            @memcpy(std.mem.sliceAsBytes(buf)[0..clip.len], clip);
+            const shape = [_]c_int{ 1, @intCast(n_frames), @intCast(spt) };
+            const frames_arr = mlx.mlx_array_new_data(buf.ptr, &shape, 3, .float32);
+            defer _ = mlx.mlx_array_free(frames_arr);
+            return vision_enc.forwardAudio(frames_arr);
+        },
+    }
 }
 
 fn finishVisionRequest(sch: *Scheduler, req: *VisionEncodeRequest, err_name: []const u8) void {
@@ -5273,7 +5181,7 @@ fn commitSlotIfApplicable(sch: *Scheduler, slot: *Slot) void {
             .head_marks = if (head) |t| t.qwen4MtpMarks() else &.{},
         };
     };
-    const finish_st = hc.commitWithMediaState(&slot.cache, total_tokens, slot.has_tools, slot.vision_key, slot.cache_key, slot.media_start, ssm_cps_opt, dflash_commit, mtp_commit, slot.full_prompt.len) catch |err| {
+    const finish_st = hc.commitWithMediaState(&slot.cache, total_tokens, slot.has_tools, slot.media, slot.cache_key, ssm_cps_opt, dflash_commit, mtp_commit, slot.full_prompt.len) catch |err| {
         // Ownership of the checkpoints transferred to the cache regardless of
         // the outcome — its error paths free them (#330 adjacent: freeing
         // here too was a double free, with a different allocator).
@@ -5329,16 +5237,11 @@ fn commitCancelledPrefillSlot(slot: *Slot, hc: *prefix_cache_mod.HotPrefixCache)
         return;
     };
     const cps: ?[]transformer_mod.SSMCheckpoint = if (salvage.checkpoints.len > 0) salvage.checkpoints else null;
-    // Pass the media boundary RAW: when the cancelled prefill forwarded less
-    // than the media position, the cache re-keys the pure-text entry to the
-    // null vision key (a kept pixel key with no boundary is the
-    // conservative-rejection poison shape; live 2026-09-07).
-    const media_start = slot.media_start;
     // Ownership of the checkpoints transfers to the cache unconditionally —
     // its error paths free them (#330 adjacent) — so detach from the slot
     // BEFORE the call or Slot.deinit frees them a second time.
     slot.cancelled_prefill = .{};
-    const st = hc.commitWithMediaState(&slot.cache, slot.full_prompt[0..len], slot.has_tools, slot.vision_key, slot.cache_key, media_start, cps, null, null, len) catch |err| {
+    const st = hc.commitWithMediaState(&slot.cache, slot.full_prompt[0..len], slot.has_tools, slot.media, slot.cache_key, cps, null, null, len) catch |err| {
         log.warn("[hot-cache] cancelled-prefill commit failed: {s}\n", .{@errorName(err)});
         return;
     };
@@ -6011,7 +5914,7 @@ fn prefillWriteThroughCb(opaque_ctx: *anyopaque, abs_kv_pos: usize, cps: []const
     if (!hc.ssd_first) return;
     const d = if (hc.disk) |*dd| dd else return;
     if (d.writer == null) return;
-    if (slot.vision_key != 0) return;
+    if (slot.media.len != 0) return;
     if (abs_kv_pos == 0 or abs_kv_pos > slot.full_prompt.len) return;
     const s = if (slot.model.transformer) |x| x.s else return;
     wc.chunks += 1;
@@ -6081,7 +5984,7 @@ fn writeThroughArmed(slot: *Slot, new_span: usize) bool {
     if (!hc.ssd_first) return false;
     const d = if (hc.disk) |*dd| dd else return false;
     const writer_up = d.writer != null;
-    if (!writer_up or slot.vision_key != 0) return false;
+    if (!writer_up or slot.media.len != 0) return false;
     if (!writeThroughSpanReached(new_span, d.chunk_tokens)) {
         if (!write_through_span_declined_logged.swap(true, .monotonic)) {
             log.info("  [disk-cache] prefill write-through declined: {d} new tokens is under one chunk ({d}) — the end-of-request commit persists this turn\n", .{ new_span, d.chunk_tokens });
@@ -6335,8 +6238,7 @@ fn runPrefill(sch: *Scheduler, slot: *Slot) !void {
                 xfm_ptr.s,
                 slot.full_prompt,
                 slot.has_tools,
-                slot.vision_key,
-                slot.media_start,
+                slot.media,
                 if (dfl_target) |*dc| .{ .cache = &dc.cache, .base_pos = &dfl_base } else null,
                 if (mtp_kv) |k| .{ .cache = k, .base_pos = &mtp_base, .head = mtp_head } else null,
                 @intFromPtr(slot),
@@ -6428,7 +6330,14 @@ fn runPrefill(sch: *Scheduler, slot: *Slot) !void {
                 .enable_mtp = slot.enable_mtp,
                 .fits = fits_fn,
             };
-            if (!Probe.call(&probe)) {
+            var fits = Probe.call(&probe);
+            // The encoder cache is the cheapest memory to give back: a miss costs one encode.
+            if (!fits) if (slot.model.vision_encoder) |ve| if (ve.emb_cache.bytes > 0) {
+                log.info("[scheduler] prefill does not fit: dropping {d}MB of cached media embeddings\n", .{ve.emb_cache.bytes / (1024 * 1024)});
+                ve.emb_cache.clear();
+                fits = Probe.call(&probe);
+            };
+            if (!fits) {
                 // The width admission was billed at, read before anything is evicted.
                 if (prefill_request_chunk) |pick_pre| {
                     admitted_prefill_chunk = pick_pre(cfg, slot.full_prompt.len, slot.max_tokens, slot.cache.config, probe.unchunked, probe.warm_matched, probe.warm_capacity, probe.warm_will_donate, probe.enable_mtp);
@@ -7280,15 +7189,6 @@ test "a finish over a latched MLX failure ends the request as an ERROR, never a 
     try testing.expect(shape.finished == null);
     try testing.expectEqualStrings("MlxFailure", shape.errored.?);
     try testing.expect(!Slot.errorNameIsMemory(shape.errored.?));
-}
-
-test "firstMediaPlaceholder finds every dynamic media kind and ignores disabled ids" {
-    const tokens = [_]u32{ 0, 11, 22, 33, 44 };
-    try testing.expectEqual(@as(?usize, 2), firstMediaPlaceholder(true, &tokens, 22, 0, 0));
-    try testing.expectEqual(@as(?usize, 3), firstMediaPlaceholder(true, &tokens, 0, 33, 0));
-    try testing.expectEqual(@as(?usize, 4), firstMediaPlaceholder(true, &tokens, 0, 0, 44));
-    try testing.expectEqual(@as(?usize, 2), firstMediaPlaceholder(true, &tokens, 44, 33, 22));
-    try testing.expect(firstMediaPlaceholder(true, &tokens, 0, 0, 0) == null);
 }
 
 test "cancelled-prefill commit length: floor, clamp, and zero" {
@@ -10178,14 +10078,4 @@ test "interleaveTicksFor: decode keeps a quarter of wall time across a slow chun
     try testing.expectEqual(@as(u32, 2), interleaveTicksFor(300 * ms, 50 * ms));
     try testing.expectEqual(@as(u32, 1), interleaveTicksFor(100 * ms, 80 * ms));
     try testing.expectEqual(@as(u32, 1), interleaveTicksFor(8000 * ms, 0));
-}
-
-test "firstMediaPlaceholder: a placeholder id in ORDINARY TEXT is not a media boundary" {
-    // The ids are ordinary vocabulary entries, so a text-only prompt can carry
-    // one (live: a pasted source file held 248056 at index 18338 of a 73k
-    // prompt). A media boundary exists only where media rows do.
-    const image_id: u32 = 248056;
-    const text_only = [_]u32{ 7, 8, image_id, 9 };
-    try testing.expectEqual(@as(?usize, null), firstMediaPlaceholder(false, &text_only, image_id, 0, 0));
-    try testing.expectEqual(@as(?usize, 2), firstMediaPlaceholder(true, &text_only, image_id, 0, 0));
 }

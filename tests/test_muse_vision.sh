@@ -58,7 +58,7 @@ echo "== token accounting (the splice depends on it) =="
 # case-insensitively; the NUMBERS are the contract.
 grep -qiE "muse grid 36x54 \(486 tokens, resized 756x504\)" "$LOG" \
   && echo "  OK: grid 36x54 → 486 tokens" || { echo "  FAIL: unexpected grid/token math"; grep -E "Decoded .* image" "$LOG"; FAIL=1; }
-grep -qE "Inserted 486 image .* \(prompt: [0-9]+ -> [0-9]+ tokens\)" "$LOG" \
+grep -qE "486 image \+ 0 video \+ 0 audio soft tokens; prompt [0-9]+ -> [0-9]+ tokens" "$LOG" \
   && echo "  OK: 486 pads spliced" || { echo "  FAIL: pad run not inserted"; FAIL=1; }
 
 echo "== two images in one turn =="

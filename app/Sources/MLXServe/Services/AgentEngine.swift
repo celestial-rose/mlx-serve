@@ -24,9 +24,13 @@ enum AgentEngine {
     }
 
     /// Estimate token cost for a message including role/format overhead.
-    static func tokenCostForMessage(_ msg: ChatMessage) -> Int {
+    /// Rough soft-token cost of one image sent in history (a screenshot's grid).
+    static let imageTokenEstimate = 1024
+
+    static func tokenCostForMessage(_ msg: ChatMessage, withImages: Bool = false) -> Int {
         var cost = 4  // role + formatting envelope
         cost += roughTokenCount(msg.content)
+        if withImages, msg.role == .user { cost += (msg.images?.count ?? 0) * imageTokenEstimate }
         // Round-tripped reasoning is part of what gets sent — a long thinking
         // trace not billed here silently blows the budget it was never
         // counted against.
@@ -68,13 +72,17 @@ enum AgentEngine {
     ///   - messages: All chat messages in the session.
     ///   - contextLength: Effective context window size.
     ///   - maxTokens: Max generation tokens (capped to 40% of context for budget math).
-    ///   - buildMultimodalContent: Optional closure to build image content blocks for the
-    ///     last user message. Pass nil to skip image handling (e.g. in TestServer).
+    ///   - buildMultimodalContent: Optional closure to build image content blocks for
+    ///     user messages. Pass nil to skip image handling (e.g. in TestServer).
+    ///   - historyImages: send every user message's images (the server renders each
+    ///     where it was sent), not only the last one's. Off for Gemma's raw-pixel
+    ///     format, ~9 MB an image against the server's body cap.
     static func buildAgentHistory(
         messages allMessages: [ChatMessage],
         contextLength: Int,
         maxTokens: Int,
-        buildMultimodalContent: ((String, [ChatImage]) -> Any)? = nil
+        buildMultimodalContent: ((String, [ChatImage]) -> Any)? = nil,
+        historyImages: Bool = false
     ) -> [[String: Any]] {
 
         // --- Budget calculation ---
@@ -104,9 +112,10 @@ enum AgentEngine {
             allMessages[$0].role == .user && allMessages[$0].toolCallId == nil
         }
 
+        let sendsImages = buildMultimodalContent != nil && historyImages
         var userPinCost = 0
         for idx in allUserIndices {
-            userPinCost += roughTokenCount(allMessages[idx].content) + 4
+            userPinCost += tokenCostForMessage(allMessages[idx], withImages: sendsImages)
         }
 
         // Safety cap: if user messages exceed 30% of budget, pin only first + last
@@ -115,7 +124,7 @@ enum AgentEngine {
         if userPinCost > userBudgetCap && allUserIndices.count > 2 {
             pinnedUserIndices = [allUserIndices.first!, allUserIndices.last!]
             userPinCost = pinnedUserIndices.reduce(0) {
-                $0 + roughTokenCount(allMessages[$1].content) + 4
+                $0 + tokenCostForMessage(allMessages[$1], withImages: sendsImages)
             }
         } else {
             pinnedUserIndices = allUserIndices
@@ -145,7 +154,7 @@ enum AgentEngine {
             if msg.failedRetry { continue }
             if msg.role == .assistant && msg.content.contains("couldn't generate a response") { continue }
 
-            let cost = tokenCostForMessage(msg)
+            let cost = tokenCostForMessage(msg, withImages: sendsImages)
             if cost > remainingBudget { break }
             remainingBudget -= cost
             includeStartIdx = i
@@ -172,9 +181,13 @@ enum AgentEngine {
         var history: [[String: Any]] = []
 
         // Emit pinned user messages that fell outside the window (in original order).
-        // Strip images — server only processes the last user message's images.
         for idx in pinnedUserOutside {
-            history.append(["role": "user", "content": allMessages[idx].content])
+            let m = allMessages[idx]
+            if sendsImages, let multimodal = buildMultimodalContent, let imgs = m.images, !imgs.isEmpty {
+                history.append(["role": "user", "content": multimodal(m.content, imgs)])
+            } else {
+                history.append(["role": "user", "content": m.content])
+            }
         }
 
         // Emit pinned first assistant response (the plan) if it fell outside.
@@ -203,7 +216,7 @@ enum AgentEngine {
             history.append(dict)
         }
 
-        // Only the last user message gets image content blocks.
+        // Without history images only the last user message carries its images.
         let lastUserMsgId: UUID? = buildMultimodalContent != nil
             ? window.last(where: { $0.role == .user && $0.toolCallId == nil })?.id
             : nil
@@ -270,7 +283,7 @@ enum AgentEngine {
 
             var dict: [String: Any] = ["role": msg.role.rawValue]
             if let multimodal = buildMultimodalContent,
-               msg.id == lastUserMsgId,
+               msg.role == .user, sendsImages || msg.id == lastUserMsgId,
                let imgs = msg.images, !imgs.isEmpty {
                 dict["content"] = multimodal(content, imgs)
             } else {

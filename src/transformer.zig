@@ -17594,19 +17594,16 @@ pub const Transformer = struct {
         const h_shape = mlx.getShape(h);
 
         // mask = (token_ids == image_token_id) [| (token_ids == audio_token_id)].
-        // Gemma 4 12B unified splices both modalities through this one channel:
-        // the embedding tensor concatenates [vision rows ; audio rows] in the
-        // same order the placeholder blocks were injected into the prompt, so a
-        // single sequence-order scatter lands each row in its slot.
+        // Every modality splices through this one channel: the embedding tensor
+        // concatenates each item's rows in prompt order, so a single
+        // sequence-order scatter lands each row in its slot.
         const img_id_arr = mlx.mlx_array_new_int(@intCast(image_token_id));
         defer _ = mlx.mlx_array_free(img_id_arr);
         var mask_2d = mlx.mlx_array_new();
         defer _ = mlx.mlx_array_free(mask_2d);
         try mlx.check(mlx.mlx_equal(&mask_2d, token_ids, img_id_arr, s));
         // Qwen video pads (`video_token_id`) and Gemma audio pads ride the same
-        // row stream in prompt order — the encoder output is concatenated
-        // [image ; video ; audio] the way `insertMultimodalTokens` lays the
-        // placeholder runs out.
+        // row stream: the encoder output is concatenated in prompt order.
         for ([_]u32{ audio_token_id, video_token_id }) |extra_id| {
             if (extra_id == 0) continue;
             const extra_arr = mlx.mlx_array_new_int(@intCast(extra_id));

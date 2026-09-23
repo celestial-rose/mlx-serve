@@ -85,8 +85,7 @@ echo "    model said: $(echo "$CONTENT" | head -c 220)"
 #    the encode produced the expected 256 soft tokens for a 768x768 square.
 assert_contains "describes the red shape"        "red"  "$CONTENT"
 assert_contains "describes the blue shape"        "blue" "$CONTENT"
-assert_contains "vision encode produced soft tokens" "\[1,256,3840\] tokens (256 vision + 0 audio)" "$(cat "$LOG")"
-assert_contains "inserted matching image placeholders" "Inserted 256 image + 0 audio soft tokens" "$(cat "$LOG")"
+assert_contains "vision encode produced matching soft tokens" "256 image + 0 video + 0 audio soft tokens" "$(cat "$LOG")"
 
 # 4. Text-only request on the same model still works (no vision regression).
 TRESP="$(curl -fs --max-time 60 -X POST "$BASE/v1/chat/completions" -H 'Content-Type: application/json' \

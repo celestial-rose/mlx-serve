@@ -8,8 +8,7 @@
 # those rows should still restore. Every answer must still name what only the
 # pixels supply (the reused prefix is only correct if the restored rows are
 # the image's). A Harness-style turn may append user-role context after the
-# human's image message; that media still belongs to the active turn, while an
-# image before the latest assistant boundary must remain historical.
+# human's image message; history images stay in every later prompt.
 set -u
 MODEL="${VISION_CACHE_MODEL:-${1:-$HOME/.mlx-serve/models/mlx-community/Qwen3.5-0.8B-MLX-4bit}}"
 PORT="${2:-11419}"
@@ -97,24 +96,24 @@ check "same-image follow-up: cached_tokens > 0" "$(python3 -c "print(1 if int('$
 check "follow-up answer reads the stop sign" "$(echo "$r4" | grep -ciE 'octagon|stop' | sed 's/^[1-9][0-9]*$/1/')" "1"
 
 echo "[5] image before trailing user-role context is processed"
-mm_before=$(grep -c 'Multimodal: processing' "$LOG" || true)
+mm_before=$(grep -c 'Multimodal: [0-9]* item' "$LOG" || true)
 mrope_before=$(grep -c 'M-RoPE: 1 images' "$LOG" || true)
 r0=$(injected_context_body "$F1" fresh | ask); echo "  $r0"
-mm_after=$(grep -c 'Multimodal: processing' "$LOG" || true)
+mm_after=$(grep -c 'Multimodal: [0-9]* item' "$LOG" || true)
 mrope_after=$(grep -c 'M-RoPE: 1 images' "$LOG" || true)
 check "injected-context turn processes one image" "$((mm_after-mm_before))" "1"
 check "injected-context answer names the sign text" "$(echo "$r0" | grep -ciE 'gr[ae]y fox|waterfall' | sed 's/^[1-9][0-9]*$/1/')" "1"
 check "injected-context turn builds Qwen M-RoPE" "$((mrope_after-mrope_before))" "1"
 
-echo "[6] text continuation does not reprocess historical media"
+echo "[6] text continuation keeps the historical image, warm"
 mm_before=$mm_after
 decode_before=$(grep -c 'Decoded .* image' "$LOG" || true)
 r0c=$(injected_context_body "$F1" continuation | ask); echo "  $r0c"
-mm_after=$(grep -c 'Multimodal: processing' "$LOG" || true)
+mm_after=$(grep -c 'Multimodal: [0-9]* item' "$LOG" || true)
 decode_after=$(grep -c 'Decoded .* image' "$LOG" || true)
-check "historical image stays behind assistant boundary" "$((mm_after-mm_before))" "0"
-check "historical image is not decoded during parsing" "$((decode_after-decode_before))" "0"
-check "text-only continuation completes" "$(echo "$r0c" | grep -cE '\| .+' | sed 's/^[1-9][0-9]*$/1/')" "1"
+check "historical image is encoded" "$((mm_after-mm_before))" "1"
+check "historical image is decoded" "$((decode_after-decode_before))" "1"
+check "continuation restores past the image" "$(python3 -c "print(1 if int('${r0c%% |*}')>0 else 0)")" "1"
 
 historical_many_body() { # $1 image, $2 count
   python3 - "$1" "$2" <<'PY'
@@ -181,11 +180,11 @@ print(json.dumps({
 PY
 }
 
-echo "[7] twenty historical images remain lazy on a text-only turn"
+echo "[7] twenty historical images all reach a text-only turn"
 decode_before=$decode_after
 r0h=$(historical_many_body "$F1" 20 | ask); echo "  $r0h"
 decode_after=$(grep -c 'Decoded .* image' "$LOG" || true)
-check "twenty historical images trigger zero decodes" "$((decode_after-decode_before))" "0"
+check "twenty historical images decode" "$((decode_after-decode_before))" "20"
 check "large historical-media request completes" "$(echo "$r0h" | grep -cE '\| .+' | sed 's/^[1-9][0-9]*$/1/')" "1"
 
 echo "[8] an image-only historical user turn remains in the rendered prompt"
@@ -193,20 +192,20 @@ decode_before=$decode_after
 image_only_tokens=$(image_only_history_body "$F1" image | ask_prompt_tokens)
 dropped_empty_tokens=$(image_only_history_body "$F1" empty | ask_prompt_tokens)
 decode_after=$(grep -c 'Decoded .* image' "$LOG" || true)
-check "image-only history triggers zero decodes" "$((decode_after-decode_before))" "0"
+check "image-only history decodes its image" "$((decode_after-decode_before))" "1"
 check "image-only user boundary contributes prompt tokens" "$(python3 -c "print(1 if int('$image_only_tokens') > int('$dropped_empty_tokens') else 0)")" "1"
 
-echo "[9] Anthropic text continuation also leaves historical images lazy"
+echo "[9] Anthropic text continuation keeps the historical image"
 decode_before=$decode_after
 r0a=$(anthropic_historical_body "$F1" | ask_anthropic); echo "  $r0a"
 decode_after=$(grep -c 'Decoded .* image' "$LOG" || true)
-check "Anthropic historical image triggers zero decodes" "$((decode_after-decode_before))" "0"
+check "Anthropic historical image decodes" "$((decode_after-decode_before))" "1"
 check "Anthropic text-only continuation completes" "$(echo "$r0a" | grep -cE '.+' | sed 's/^[1-9][0-9]*$/1/')" "1"
 
 echo "[10] assistant-prefix continuation keeps current-turn media"
-mm_before=$mm_after
+mm_before=$(grep -c 'Multimodal: [0-9]* item' "$LOG" || true)
 r0p=$(injected_context_body "$F1" assistant-prefix | ask); echo "  $r0p"
-mm_after=$(grep -c 'Multimodal: processing' "$LOG" || true)
+mm_after=$(grep -c 'Multimodal: [0-9]* item' "$LOG" || true)
 check "assistant-prefix continuation processes one image" "$((mm_after-mm_before))" "1"
 check "assistant-prefix continuation reads the signs" "$(echo "$r0p" | grep -ciE 'gr[ae]y fox|waterfall' | sed 's/^[1-9][0-9]*$/1/')" "1"
 

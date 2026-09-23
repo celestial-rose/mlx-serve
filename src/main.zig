@@ -1309,7 +1309,7 @@ pub fn main(init: std.process.Init) !void {
         defer settings.deinit(allocator);
         scheduler_mod.applyModelSettings(config, chat_config, &settings);
     }
-    try config.applyTokenizer(allocator, tok, chat_config.eos_token, chat_config.chat_template);
+    config.applyTokenizer(tok, chat_config.eos_token);
 
     const load_vision = config.has_vision and !no_vision;
 
