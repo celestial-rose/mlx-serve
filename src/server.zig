@@ -5346,11 +5346,16 @@ pub fn prefillRequestTerms(config: *const model_mod.ModelConfig, seq: u64, max_t
     // allocator twin is gated too, so an ungated guard billed memory never reserved). `.{}` is
     // the identity: `prefillMemoryNeeded` then reduces to the previous expression.
     const dq_min_rows: u64 = transformer_mod.prefillDqGemmMinRows(config.quant_bits);
-    if (!config.longCtxGated()) return .{ .dq_min_rows = dq_min_rows };
+    const kv_per_tok = kvBytesPerTokenAtBits(config.kvBytesPerToken(), kv_bits);
+    if (!config.longCtxGated()) {
+        const credited = warm.creditedRows(seq);
+        return .{
+            .dq_min_rows = dq_min_rows,
+            .shared_resident_bytes = credited *| kv_per_tok,
+        };
+    }
     // `reservedTokens` returns 0 below its length threshold; floor the reserved length at `seq`.
     const reserved = @max(reservedCacheTokens(seq, max_tokens, chunk, getEffectiveContextLength(config)), seq);
-    // Only the headroom is new here: the prompt's own rows are already billed.
-    const kv_per_tok = kvBytesPerTokenAtBits(config.kvBytesPerToken(), kv_bits);
     const mtp_on = warm.mtp_on or forceMtpFor(config);
     const head_per_tok: u64 = if (mtp_on) mtpHeadKvBytesPerToken(config) else 0;
     const head_qsa_ring: u64 = if (mtp_on) mtpHeadQsaRingBytes(config) else 0;
@@ -23294,12 +23299,9 @@ test "prefillRequestTerms: the admission bill's new terms are qwen4_exp-only" {
         try t.expectEqual(@as(u64, 0), terms.reserved_kv_bytes);
         try t.expectEqual(@as(u64, 0), terms.checkpoint_bytes);
         try t.expectEqual(@as(u64, 0), terms.state_bytes);
-        try t.expectEqual(@as(u64, 0), terms.shared_resident_bytes);
-        // `.{}` is the identity: the whole bill is the previous expression.
-        try t.expectEqual(
-            prefillMemoryNeeded(seq, 24, 2, cfg.kvBytesPerToken(), 256, 256, 2560, 9216, kv_bits, chunk, cfg.prefillAttnKeys(seq), prefillStreamBytesPerToken(&cfg), prefillDequantWeightBytes(&cfg), .{}),
-            prefillMemoryNeeded(seq, 24, 2, cfg.kvBytesPerToken(), 256, 256, 2560, 9216, kv_bits, chunk, cfg.prefillAttnKeys(seq), prefillStreamBytesPerToken(&cfg), prefillDequantWeightBytes(&cfg), terms),
-        );
+        try t.expect(terms.shared_resident_bytes > 0);
+        // Other terms remain qwen4_exp only
+        try t.expectEqual(@as(u64, 0), terms.reserved_kv_bytes);
     }
 
     const q4 = qwen4ExpOomConfig();

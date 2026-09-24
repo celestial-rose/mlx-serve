@@ -948,7 +948,7 @@ pub const ModelConfig = struct {
     /// reservation, pad-waste cap, checkpoint thinning, admission terms, chunk bar) was
     /// measured on qwen4_exp only, so they are opt-in by arch. Never hand-roll it at a site.
     pub fn longCtxGated(self: *const ModelConfig) bool {
-        return self.isQwen4() or std.mem.startsWith(u8, self.model_type, "qwen3_5");
+        return self.isQwen4();
     }
 
     pub fn batchedEffectiveKvLen(self: *const ModelConfig, kv: u32, gather_on: bool, gather_min_kv: u32) u32 {
