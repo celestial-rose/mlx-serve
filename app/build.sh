@@ -32,6 +32,27 @@ if [ "$ZIG_DEBUG" = "1" ] && [ "$FAST_DEV" != "1" ]; then
     exit 1
 fi
 
+# `bash app/build.sh ko`: once the build succeeds, quit the running app and its
+# server, then open the fresh bundle.
+case "${1:-}" in
+    "" | ko) ;;
+    *) echo "ERROR: unknown argument '$1' (usage: bash app/build.sh [ko])"; exit 1 ;;
+esac
+relaunch_app() {
+    echo "→ Relaunching $APP_NAME..."
+    osascript -e "tell application id \"$BUNDLE_ID\" to quit" 2>/dev/null || true
+    local procs="$APP_NAME.app/Contents/MacOS/"
+    for _ in $(seq 1 50); do
+        pgrep -f "$procs" >/dev/null || break
+        sleep 0.2
+    done
+    pkill -9 -f "$procs" || true
+    open "$APP"
+}
+if [ "${1:-}" = "ko" ]; then
+    trap '[ $? -eq 0 ] && relaunch_app' EXIT
+fi
+
 # Signing identity from env (set in ~/.zshrc or CI). Unset = ad-hoc ("-"), so
 # anyone can build without an Apple Developer account; a release sets the real
 # identity (release.yml does).

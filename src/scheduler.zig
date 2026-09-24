@@ -6293,10 +6293,7 @@ fn runPrefill(sch: *Scheduler, slot: *Slot) !void {
     // re-asked after the pass against the live delta.
     var admitted_prefill_chunk: u32 = 0;
     var evicted_live_bytes: u64 = 0;
-    // Arch gate for the whole pass; the connection-thread half is gated in
-    // `server.prefillAdmissionBill`. `publishHotCacheResidency` is not gated.
-    const admission_pass_armed = if (slot.model.config) |c| c.longCtxGated() else false;
-    if (admission_pass_armed) if (prefill_admission_fits) |fits_fn| {
+    if (prefill_admission_fits) |fits_fn| {
         if (slot.model.config) |cfg| {
             // Bills the request's own kv-quant scheme and vision chunking, not the process defaults.
             const Probe = struct {
@@ -6363,7 +6360,7 @@ fn runPrefill(sch: *Scheduler, slot: *Slot) !void {
                 }
             }
         }
-    };
+    }
 
     // The prefill width for this request, chosen after the admission pass evicted. Falls
     // back to the load-time pin without the hook or the arch opt-in.

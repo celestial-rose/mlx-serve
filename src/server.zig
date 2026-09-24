@@ -5367,21 +5367,15 @@ fn slotFailure(slot: *scheduler_mod.Slot) anyerror {
 /// The message `error.GenerationOutOfMemory` sends on every surface and both paths.
 const GEN_OOM_MSG = "The engine ran out of GPU memory during this request and it was abandoned. The server is still running. Reduce the prompt length, lower --ctx-size, or free memory on the machine.";
 
-/// The body of the pre-flight memory 400. Two arms: with the credits present the message
-/// quotes them; with them structurally zero (every arch outside `longCtxGated`) the previous
-/// sentence, which named no cache. The discriminator is the arch gate, not `bill.evictable`,
-/// so the qwen4_exp bytes stay exactly as they were. Caller owns the returned bytes.
+/// The body of the pre-flight memory 400, quoting the hot-cache credits the guard compared.
+/// Caller owns the returned bytes.
 fn memoryRefusalMessage(
     allocator: std.mem.Allocator,
     prompt_len: usize,
     needed_mb: u64,
     avail_mb: u64,
     bill: AdmissionBill,
-    carries_cache: bool,
 ) ![]u8 {
-    if (!carries_cache) {
-        return std.fmt.allocPrint(allocator, "Prompt ({d} tokens) requires ~{d}MB GPU memory but only ~{d}MB available. Reduce prompt size or use a smaller model.", .{ prompt_len, needed_mb, avail_mb });
-    }
     return std.fmt.allocPrint(allocator, "Prompt ({d} tokens) requires ~{d}MB GPU memory but only ~{d}MB is available and the hot prefix cache holds ~{d}MB more, all of which can be reclaimed (~{d}MB — the shortfall is elsewhere), which is not enough. Reduce prompt size, lower --ctx-size, or use a smaller model.", .{ prompt_len, needed_mb, avail_mb, bill.evictable / (1024 * 1024), bill.evictionCredit() / (1024 * 1024) });
 }
 
@@ -5906,13 +5900,6 @@ pub fn prefillAdmissionBill(config: *const model_mod.ModelConfig, prompt_len: us
             sch.reclaimable_hot_cache_bytes.load(.monotonic)
     else
         0;
-    // Arch gate for the whole evict-to-admit half: both admit arms are driven entirely by the
-    // two credits, so zeroing them restores the previous single `needed > available` refusal.
-    // Off the gated arch an admit that then dies mid-prefill is worse than a clean 400. The
-    // publishers stay on every arch (the guard used to dereference `hot_prefix_cache`).
-    if (!config.longCtxGated()) {
-        return .{ .needed = needed, .available = available, .chunk = chunk };
-    }
     return .{ .needed = needed, .available = available, .evictable = evictable, .reclaimable = reclaimable, .chunk = chunk };
 }
 
@@ -6060,9 +6047,8 @@ fn checkAttentionMemory(allocator: std.mem.Allocator, stream: *Conn, prompt_ids:
         const avail_mb = available / (1024 * 1024);
         log.warn("  prompt {d} tokens needs ~{d}MB (KV+working+margin) at prefill chunk {d}, ~{d}MB available + ~{d}MB reclaimable of ~{d}MB resident hot cache — rejecting\n", .{ prompt_len, needed_mb, bill.chunk, avail_mb, bill.evictionCredit() / (1024 * 1024), bill.evictable / (1024 * 1024) });
         // A refusal quotes the numbers it compared, hot cache included; everything the cache holds
-        // is evictable here by construction (the withheld case took the deferral arm). The cache
-        // clause is only true where the bill carries the cache; `memoryRefusalMessage` is the one formatter.
-        const msg = try memoryRefusalMessage(allocator, prompt_len, needed_mb, avail_mb, bill, config.longCtxGated());
+        // is evictable here by construction (the withheld case took the deferral arm).
+        const msg = try memoryRefusalMessage(allocator, prompt_len, needed_mb, avail_mb, bill);
         defer allocator.free(msg);
         if (is_anthropic) {
             try sendAnthropicError(allocator, stream, "invalid_request_error", msg, 400);
@@ -23376,72 +23362,67 @@ test "ctxSizingCacheReserve: the advertised context is unchanged on every other 
     try t.expect(big < small);
 }
 
-test "prefillAdmissionBill: the evict-to-admit credits are qwen4_exp-only" {
-    // Both admit arms are driven entirely by the two credits, so zeroing them restores the
-    // previous single `needed > available` refusal.
+test "prefillAdmissionBill: every arch carries the evict-to-admit credits (#492)" {
+    // A qwen3_5 100k prompt was refused with GBs of evictable hot cache resident.
+    const t = std.testing;
+    const MB: u64 = 1024 * 1024;
+    var sch: scheduler_mod.Scheduler = undefined;
+    sch.resident_hot_cache_bytes = .init(9000 * MB);
+    sch.reclaimable_hot_cache_bytes = .init(8000 * MB);
+    global_scheduler = &sch;
+    defer global_scheduler = null;
+    for ([_][]const u8{ "qwen3_5", "qwen3_5_moe", "llama", "gemma4", "qwen4_exp" }) |mt| {
+        var cfg = qwen4ExpOomConfig();
+        cfg.model_type = mt;
+        const bill = prefillAdmissionBill(&cfg, 100_000, 2048, null, false, null, .{});
+        try t.expectEqual(9000 * MB, bill.evictable);
+        try t.expectEqual(8000 * MB, bill.reclaimable);
+    }
+}
+
+test "prefillAdmissionBill: both admit arms are driven by the two credits" {
     const t = std.testing;
     const MB: u64 = 1024 * 1024;
 
-    const gated = AdmissionBill{ .needed = 30 * MB, .available = 20 * MB, .evictable = 15 * MB, .reclaimable = 15 * MB };
-    try t.expect(!gated.fits());
-    try t.expect(gated.fitsAfterEviction()); // evict-and-admit
-    try t.expectEqual(AdmissionVerdict.evict, admissionVerdict(gated));
+    const evict = AdmissionBill{ .needed = 30 * MB, .available = 20 * MB, .evictable = 15 * MB, .reclaimable = 15 * MB };
+    try t.expect(!evict.fits());
+    try t.expect(evict.fitsAfterEviction());
+    try t.expectEqual(AdmissionVerdict.evict, admissionVerdict(evict));
 
     const deferral = AdmissionBill{ .needed = 30 * MB, .available = 20 * MB, .evictable = 15 * MB, .reclaimable = 0 };
     try t.expect(!deferral.fitsAfterEviction());
     try t.expect(pinnedResidentBytes(deferral) > 0); // warm deferral
 
-    // Ungated the bill carries neither credit, and both arms go dead.
-    const ungated = AdmissionBill{ .needed = 30 * MB, .available = 20 * MB };
-    try t.expectEqual(ungated.fits(), ungated.fitsAfterEviction());
-    try t.expectEqual(@as(u64, 0), pinnedResidentBytes(ungated));
-    try t.expectEqual(AdmissionVerdict.refuse, admissionVerdict(ungated));
+    // An empty cache carries neither credit, and both arms go dead.
+    const empty = AdmissionBill{ .needed = 30 * MB, .available = 20 * MB };
+    try t.expectEqual(empty.fits(), empty.fitsAfterEviction());
+    try t.expectEqual(@as(u64, 0), pinnedResidentBytes(empty));
+    try t.expectEqual(AdmissionVerdict.refuse, admissionVerdict(empty));
     // A bill that fits still admits on both arms.
     const roomy = AdmissionBill{ .needed = 10 * MB, .available = 20 * MB };
     try t.expectEqual(AdmissionVerdict.admit, admissionVerdict(roomy));
 }
 
-test "memoryRefusalMessage: the 400 names the hot cache only where the bill carries it" {
-    const qsa_fused_off = qsaScoreFusedOffGuard();
-    defer qsa_fused_off.deinit();
-    // A non-qwen4 refusal read "the hot prefix cache holds ~0MB ..." on a box with a multi-GB resident cache.
+test "memoryRefusalMessage: the 400 quotes the hot-cache credits the guard compared" {
     const t = std.testing;
     const MB: u64 = 1024 * 1024;
 
-    // Ungated: the previous sentence, byte for byte.
-    const bare = try memoryRefusalMessage(t.allocator, 12_000, 4096, 2048, .{ .needed = 30 * MB, .available = 20 * MB }, false);
-    defer t.allocator.free(bare);
-    try t.expectEqualStrings(
-        "Prompt (12000 tokens) requires ~4096MB GPU memory but only ~2048MB available. Reduce prompt size or use a smaller model.",
-        bare,
-    );
-
-    // Gated: the message quotes what the guard compared.
     const rich = try memoryRefusalMessage(t.allocator, 12_000, 4096, 2048, .{
         .needed = 30 * MB,
         .available = 20 * MB,
         .evictable = 1500 * MB,
         .reclaimable = 900 * MB,
-    }, true);
+    });
     defer t.allocator.free(rich);
     try t.expect(std.mem.indexOf(u8, rich, "holds ~1500MB more") != null);
     try t.expect(std.mem.indexOf(u8, rich, "(~900MB") != null);
 
-    // The gated arch reaches this arm with an empty cache too and keeps its bytes, zeroes and all.
-    const q4_cold = try memoryRefusalMessage(t.allocator, 12_000, 4096, 2048, .{ .needed = 30 * MB, .available = 20 * MB }, true);
-    defer t.allocator.free(q4_cold);
+    const cold = try memoryRefusalMessage(t.allocator, 12_000, 4096, 2048, .{ .needed = 30 * MB, .available = 20 * MB });
+    defer t.allocator.free(cold);
     try t.expectEqualStrings(
         "Prompt (12000 tokens) requires ~4096MB GPU memory but only ~2048MB is available and the hot prefix cache holds ~0MB more, all of which can be reclaimed (~0MB — the shortfall is elsewhere), which is not enough. Reduce prompt size, lower --ctx-size, or use a smaller model.",
-        q4_cold,
+        cold,
     );
-    const ungated_rich = try memoryRefusalMessage(t.allocator, 12_000, 4096, 2048, .{
-        .needed = 30 * MB,
-        .available = 20 * MB,
-        .evictable = 1500 * MB,
-        .reclaimable = 900 * MB,
-    }, false);
-    defer t.allocator.free(ungated_rich);
-    try t.expectEqualStrings(bare, ungated_rich);
 }
 
 /// The live 364k agent session: `qwen4ExpOomConfig` plus the deployed pack's indexer budget 2048,
