@@ -6037,6 +6037,7 @@ pub fn logPrefillRefusal(config: *const model_mod.ModelConfig, prompt_len: usize
 
 fn checkAttentionMemory(allocator: std.mem.Allocator, stream: *Conn, prompt_ids: []const u32, max_tokens: u32, config: *const model_mod.ModelConfig, is_anthropic: bool, kv_override: ?transformer_mod.KVQuantConfig, lm: *const LoadedModel, unchunked_prefill: bool, enable_mtp: bool, media_bytes: u64) !bool {
     const prompt_len: usize = prompt_ids.len;
+    if (scheduler_mod.skip_mem_preflight) return true;
     if (!mlxMemoryGuardApplies(lm.ds4_engine != null, lm.llama_engine != null)) return true;
     if (config.num_attention_heads == 0) return true; // unknown architecture, skip check
     // The connection thread has no slot and no cache: it bills cold and defers a warm prompt.
