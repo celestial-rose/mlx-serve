@@ -6419,13 +6419,17 @@ fn runPrefill(sch: *Scheduler, slot: *Slot) !void {
                 // What the allocator returned, not what the cache was billed for.
                 evicted_live_bytes = report.bytes;
                 if (!report.admitted) {
-                    log.warn("[scheduler] prefill refused: {d} tokens do not fit even with an empty hot cache\n", .{slot.full_prompt.len});
-                    if (prefill_admission_refused_log) |report_fn| {
-                        report_fn(cfg, slot.full_prompt.len, slot.max_tokens, slot.cache.config, probe.unchunked, probe.warm_matched, probe.warm_capacity, probe.warm_will_donate, probe.enable_mtp);
+                    if (skip_mem_preflight) {
+                        log.warn("[scheduler] prefill would be refused ({d} tokens do not fit in memory calculation), but --skip-mem-preflight is enabled — proceeding anyway\n", .{slot.full_prompt.len});
+                    } else {
+                        log.warn("[scheduler] prefill refused: {d} tokens do not fit even with an empty hot cache\n", .{slot.full_prompt.len});
+                        if (prefill_admission_refused_log) |report_fn| {
+                            report_fn(cfg, slot.full_prompt.len, slot.max_tokens, slot.cache.config, probe.unchunked, probe.warm_matched, probe.warm_capacity, probe.warm_will_donate, probe.enable_mtp);
+                        }
+                        // Not `error.OutOfMemory` (the MLX latch's name, a 503): this is a request the
+                        // machine cannot hold, a named 400.
+                        return error.PrefillDoesNotFit;
                     }
-                    // Not `error.OutOfMemory` (the MLX latch's name, a 503): this is a request the
-                    // machine cannot hold, a named 400.
-                    return error.PrefillDoesNotFit;
                 }
             }
         }
